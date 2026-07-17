@@ -1,0 +1,51 @@
+{
+  "name": "skctl",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A ctl-style manager for portable agent skills and slash commands across hosts (Claude Code, Codex, OpenCode)",
+  "keywords": [
+    "skills",
+    "agents",
+    "claude-code",
+    "codex",
+    "opencode",
+    "raycast",
+    "cli"
+  ],
+  "homepage": "https://github.com/trevorrecker/skctl#readme",
+  "bugs": {
+    "url": "https://github.com/trevorrecker/skctl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trevorrecker/skctl.git"
+  },
+  "license": "MIT",
+  "author": "Trevor Recker",
+  "bin": {
+    "skctl": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js",
+    "dev": "tsc --watch",
+    "test": "node --test dist/**/*.test.js",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}
