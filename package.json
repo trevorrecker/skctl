@@ -23,7 +23,7 @@
   "license": "MIT",
   "author": "Trevor Recker",
   "bin": {
-    "skctl": "./dist/cli.js"
+    "skctl": "dist/cli.js"
   },
   "files": [
     "dist"
