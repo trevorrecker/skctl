@@ -10,17 +10,17 @@ manage it with the same binary.
 
 ## Run it
 
-No install — straight from npm or GitHub:
+Straight from GitHub — no clone, no npm account (builds on fetch):
 
 ```bash
-npx skctl init ~/my-skills        # published to npm
-npx github:trevorrecker/skctl status   # or straight from the repo (builds on fetch)
+npx github:trevorrecker/skctl init ~/my-skills
+npx github:trevorrecker/skctl status
 ```
 
-Install globally:
+Install globally from GitHub:
 
 ```bash
-npm install -g skctl
+npm install -g github:trevorrecker/skctl
 ```
 
 Or from a clone (for hacking on it):
@@ -30,6 +30,10 @@ git clone https://github.com/trevorrecker/skctl ~/dev/skctl
 cd ~/dev/skctl && npm install       # builds via `prepare`
 ln -sf ~/dev/skctl/dist/cli.js ~/.local/bin/skctl
 ```
+
+> Not on the npm registry yet — the unscoped name `skctl` is blocked as a
+> near-duplicate of an existing package. Use the GitHub specifier above; a scoped
+> `@trevorrecker/skctl` may follow.
 
 ## Point it at a skills root
 
