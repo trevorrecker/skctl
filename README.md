@@ -66,6 +66,7 @@ Resolution precedence, highest first:
 ```
 skctl init [dir]                        scaffold + register a skills root (default: cwd)
 skctl config [set root|raycast <dir>]   show or update configuration
+skctl create skill|command [name]       scaffold a new source file (prompts if name omitted)
 skctl get skills|commands|remotes [name]    list, or one entry; -o wide|name|json
 skctl get skill|command <name> -o body|raw  print body (default) or the whole file
 skctl describe skill|command <name>     detailed view (state, hosts, description, path)
@@ -81,6 +82,23 @@ skctl raycast sync [--dir <path>]       regenerate Raycast scripts with a live d
 Global flags: `--root <dir>`, `--project[=DIR]` (operate on `<DIR>/.agents` instead of
 the global root). Compiled command files carry a generated banner and must not be
 hand-edited.
+
+## Create
+
+`skctl create skill|command <name>` scaffolds a source file into the resolved scope with
+valid frontmatter and a starter body, then prints the `apply` to run — it does not
+materialize until you ask.
+
+```bash
+skctl create skill my-skill -d "what it does and when to reach for it"
+skctl create command greet -d "greets someone" --argument-hint "<name>" --apply
+cat draft.md | skctl create skill my-skill --body -    # body from stdin (or --body "text")
+```
+
+Run it with no `<name>` in a terminal to be prompted for the name and description. Flags:
+`-d/--description`, `--body <text|->` (a leading `---` block is merged, CLI args win),
+`--hosts a,b,c` (narrows the manifest entry), `--argument-hint` (commands), `--apply`
+(materialize now), `--force` (overwrite). New skills get `paste: true`; `--no-paste` omits it.
 
 ## Manifest
 
