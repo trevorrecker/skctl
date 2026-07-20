@@ -104,3 +104,19 @@ export const setEnabled = (
     },
   };
 };
+
+export const setHosts = (
+  manifest: SkillsManifest,
+  collection: Collection,
+  name: string,
+  hosts: Host[],
+): SkillsManifest => {
+  const current = manifest[collection][name] ?? {};
+  return {
+    ...manifest,
+    [collection]: {
+      ...manifest[collection],
+      [name]: { ...current, hosts },
+    },
+  };
+};
