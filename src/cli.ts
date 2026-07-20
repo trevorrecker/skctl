@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import {
   commandContent,
   listCommands,
@@ -9,13 +10,15 @@ import {
 } from "./skills/inspect.js";
 import { doctor } from "./skills/doctor.js";
 import { importLooseSkills } from "./skills/import.js";
-import { loadManifest, saveManifest, setEnabled } from "./skills/manifest.js";
+import { createCommand, createSkill, validateName } from "./skills/create.js";
+import { loadManifest, saveManifest, setEnabled, setHosts } from "./skills/manifest.js";
 import { resolveProjectPaths, resolveSkillPaths } from "./skills/paths.js";
 import { listRemotes, updateRemotes } from "./skills/remotes.js";
 import { sync } from "./skills/sync.js";
+import { AllHosts } from "./skills/types.js";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
 import type { SkillPaths } from "./skills/paths.js";
-import type { Action, Collection } from "./skills/types.js";
+import type { Action, Collection, Host } from "./skills/types.js";
 import { configPath, initRoot, loadConfig, resolveRoot, saveConfig } from "./config.js";
 import { defaultRaycastDir, syncRaycast } from "./raycast.js";
 
@@ -24,6 +27,7 @@ const usage = `skctl — manage portable agent skills & commands across hosts
 Usage:
   skctl init [dir]                      scaffold + register a skills root (default: cwd)
   skctl config [set root|raycast <dir>] show or update configuration
+  skctl create skill|command [name]     scaffold a new source file (interactive if name omitted)
   skctl get skills|commands|remotes [name] [-o wide|name|json]
   skctl get skill|command <name> -o body|raw   print body (default) or whole file
   skctl describe skill|command <name>   detailed view
@@ -36,6 +40,8 @@ Usage:
   skctl raycast sync [--dir <path>]     regenerate Raycast script commands
 
 Global flags: --root <dir> (override skills root), --project[=DIR] (operate on <DIR>/.agents)
+create flags: -d/--description <text>, --body <text|-> (- reads stdin), --hosts a,b,c,
+  --argument-hint <text> (commands), --no-paste (skills), --apply, --force
 Root resolution: --root > SKCTL_ROOT > ~/.config/skctl/config.json`;
 
 interface Args {
@@ -44,9 +50,16 @@ interface Args {
   project?: string | true;
   output?: string;
   dir?: string;
+  description?: string;
+  body?: string;
+  argumentHint?: string;
+  hosts?: string;
   dryRun: boolean;
   paste: boolean;
+  noPaste: boolean;
   noRaycast: boolean;
+  apply: boolean;
+  force: boolean;
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -54,20 +67,35 @@ const parseArgs = (argv: string[]): Args => {
     positional: [],
     dryRun: false,
     paste: false,
+    noPaste: false,
     noRaycast: false,
+    apply: false,
+    force: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     const value = (inline?: string): string => inline ?? argv[(index += 1)];
     if (token === "--dry-run") args.dryRun = true;
     else if (token === "--paste") args.paste = true;
+    else if (token === "--no-paste") args.noPaste = true;
     else if (token === "--no-raycast") args.noRaycast = true;
+    else if (token === "--apply") args.apply = true;
+    else if (token === "--force") args.force = true;
     else if (token === "--project") args.project = true;
     else if (token.startsWith("--project=")) args.project = token.slice("--project=".length);
     else if (token === "--root") args.root = value();
     else if (token.startsWith("--root=")) args.root = token.slice("--root=".length);
     else if (token === "--dir") args.dir = value();
     else if (token.startsWith("--dir=")) args.dir = token.slice("--dir=".length);
+    else if (token === "-d" || token === "--description") args.description = value();
+    else if (token.startsWith("-d=")) args.description = token.slice("-d=".length);
+    else if (token.startsWith("--description=")) args.description = token.slice("--description=".length);
+    else if (token === "--body") args.body = value();
+    else if (token.startsWith("--body=")) args.body = token.slice("--body=".length);
+    else if (token === "--argument-hint" || token === "--arg-hint") args.argumentHint = value();
+    else if (token.startsWith("--argument-hint=")) args.argumentHint = token.slice("--argument-hint=".length);
+    else if (token === "--hosts") args.hosts = value();
+    else if (token.startsWith("--hosts=")) args.hosts = token.slice("--hosts=".length);
     else if (token === "-o" || token === "--output") args.output = value();
     else if (token.startsWith("-o=")) args.output = token.slice("-o=".length);
     else if (token.startsWith("--output=")) args.output = token.slice("--output=".length);
@@ -398,6 +426,72 @@ const describeDispatch = (args: Args): string => {
   return describeText(resolveScope(args), resource, name);
 };
 
+const prompt = async (question: string): Promise<string> => {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
+};
+
+const readStdin = async (): Promise<string> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf-8");
+};
+
+const parseHostList = (value: string | undefined): Host[] | undefined => {
+  if (value === undefined) return undefined;
+  const hosts = value.split(",").map((host) => host.trim()).filter(Boolean);
+  const invalid = hosts.filter((host) => !(AllHosts as readonly string[]).includes(host));
+  if (invalid.length > 0) {
+    throw new Error(`unknown host(s): ${invalid.join(", ")} (valid: ${AllHosts.join(", ")})`);
+  }
+  return hosts as Host[];
+};
+
+const createDispatch = async (args: Args): Promise<string> => {
+  const resource = resolveResource(args.positional[1]);
+  if (resource !== "skills" && resource !== "commands") {
+    throw new Error("usage: skctl create skill|command [name] [-d desc] [--body text] ...");
+  }
+  const paths = resolveScope(args);
+  const interactive = process.stdin.isTTY === true;
+  const body = args.body === "-" ? await readStdin() : args.body;
+  const hosts = parseHostList(args.hosts);
+
+  let name = args.positional[2];
+  if (!name && interactive) name = (await prompt("name: ")).trim();
+  if (!name) throw new Error("create requires a <name> — pass it as an argument or run in a terminal");
+  validateName(name);
+
+  let description = args.description;
+  if (description === undefined && interactive) {
+    const answer = (await prompt("description (blank for a TODO): ")).trim();
+    if (answer) description = answer;
+  }
+
+  const collection: Collection = resource;
+  const dest =
+    resource === "skills"
+      ? createSkill(paths, { name, description, paste: !args.noPaste, body }, args.force)
+      : createCommand(paths, { name, description, argumentHint: args.argumentHint, body }, args.force);
+
+  const lines = [`created ${collection.slice(0, -1)} '${name}' at ${dest}`];
+  if (hosts) {
+    saveManifest(paths.manifestPath, setHosts(loadManifest(paths.manifestPath), collection, name, hosts));
+    lines.push(`hosts: ${hosts.join(", ")}`);
+  }
+  if (args.apply) {
+    lines.push("", applyText(paths, args, { dryRun: false }));
+  } else {
+    const projectFlag = paths.scope === "project" ? " --project" : "";
+    lines.push(`run 'skctl apply${projectFlag}' to materialize it into hosts`);
+  }
+  return lines.join("\n");
+};
+
 const raycastDispatch = (args: Args): string => {
   if (args.positional[1] !== "sync") throw new Error("usage: skctl raycast sync [--dir <path>]");
   const paths = resolveScope(args);
@@ -405,7 +499,7 @@ const raycastDispatch = (args: Args): string => {
   return `raycast (${target})\n${summarizeActions(syncRaycast(paths, target))}`;
 };
 
-const run = (argv: string[]): string => {
+const run = async (argv: string[]): Promise<string> => {
   const args = parseArgs(argv);
   const command = args.positional[0];
   switch (command) {
@@ -413,6 +507,8 @@ const run = (argv: string[]): string => {
       return initText(args);
     case "config":
       return configText(args);
+    case "create":
+      return createDispatch(args);
     case "get":
       return getText(args);
     case "describe":
@@ -441,10 +537,11 @@ const run = (argv: string[]): string => {
   }
 };
 
-try {
-  const output = run(process.argv.slice(2));
-  if (output) console.log(output);
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-}
+run(process.argv.slice(2))
+  .then((output) => {
+    if (output) console.log(output);
+  })
+  .catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
