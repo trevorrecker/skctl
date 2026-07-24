@@ -26,7 +26,9 @@
     "skctl": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts"
   ],
   "engines": {
     "node": ">=18"
@@ -34,19 +36,22 @@
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "dev": "tsc --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --test dist/*.test.js dist/*/*.test.js",
+    "changeset:version": "changeset version && npm install --package-lock-only --ignore-scripts",
+    "release": "npm run build && changeset publish",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build && npm test"
   },
   "publishConfig": {
-    "access": "public"
-  },
-  "dependencies": {
-    "gray-matter": "^4.0.3"
+    "access": "public",
+    "provenance": true
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
     "@types/node": "^22.15.3",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
   }
 }
