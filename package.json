@@ -1,6 +1,6 @@
 {
   "name": "@trevorrecker/skctl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "A ctl-style manager for portable agent skills and slash commands across hosts (Claude Code, Codex, OpenCode)",
   "keywords": [
