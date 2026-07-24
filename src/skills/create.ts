@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import matter from "gray-matter";
+import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter.js";
 import type { SkillPaths } from "./paths.js";
 
 export interface SkillFields {
@@ -52,12 +52,7 @@ const parseBody = (
   body: string | undefined,
 ): { data: Record<string, unknown>; content: string } => {
   if (body === undefined) return { data: {}, content: "" };
-  const parsed = matter(body);
-  const data =
-    parsed.data && typeof parsed.data === "object"
-      ? (parsed.data as Record<string, unknown>)
-      : {};
-  return { data, content: parsed.content };
+  return parseFrontmatter(body);
 };
 
 export const renderSkill = (fields: SkillFields): string => {
@@ -68,7 +63,7 @@ export const renderSkill = (fields: SkillFields): string => {
   if (fields.paste) data.paste = true;
   else delete data.paste;
   const body = content.trim() || skillBodyPlaceholder(fields.name);
-  return matter.stringify(`\n${body}\n`, data);
+  return stringifyFrontmatter(`\n${body}\n`, data);
 };
 
 export const renderCommand = (fields: CommandFields): string => {
@@ -78,7 +73,7 @@ export const renderCommand = (fields: CommandFields): string => {
   else if (typeof data.description !== "string") data.description = commandDescriptionPlaceholder;
   if (fields.argumentHint !== undefined) data.argumentHint = fields.argumentHint;
   const body = content.trim() || commandBodyPlaceholder(fields.name);
-  return matter.stringify(`\n${body}\n`, data);
+  return stringifyFrontmatter(`\n${body}\n`, data);
 };
 
 const write = (dest: string, content: string, force: boolean, label: string): string => {

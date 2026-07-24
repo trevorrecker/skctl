@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
+import { parseFrontmatter } from "./frontmatter.js";
 import { loadManifest, resolveEntry } from "./manifest.js";
 import { resolveRemoteSkills } from "./remotes.js";
 import { listCommandNames, listSkillNames } from "./sync.js";
@@ -48,10 +48,7 @@ const stripFrontmatter = (file: string): string => {
 const readFrontmatter = (path: string): Record<string, unknown> => {
   if (!existsSync(path)) return {};
   try {
-    const parsed = matter(readFileSync(path, "utf-8"));
-    return parsed.data && typeof parsed.data === "object"
-      ? (parsed.data as Record<string, unknown>)
-      : {};
+    return parseFrontmatter(readFileSync(path, "utf-8")).data;
   } catch {
     return {};
   }
@@ -62,7 +59,7 @@ const readContent = (path: string, raw: boolean): string => {
   const file = readFileSync(path, "utf-8");
   if (raw) return file;
   try {
-    return matter(file).content.trim();
+    return parseFrontmatter(file).content.trim();
   } catch {
     return stripFrontmatter(file);
   }
