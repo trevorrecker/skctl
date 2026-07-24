@@ -1,5 +1,8 @@
 # skctl
 
+[![CI](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml/badge.svg)](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@trevorrecker/skctl)](https://www.npmjs.com/package/@trevorrecker/skctl)
+
 A `ctl`-style manager for portable agent skills and slash commands. Point it at a
 **skills root** — a repo you own containing `skills/`, `commands/`, `remotes/`, and
 `skills.config.json` — and it materializes that manifest into every agent host
@@ -23,10 +26,11 @@ Install globally:
 npm install -g @trevorrecker/skctl
 ```
 
-Or run from GitHub without npm (builds on fetch):
+Or run from GitHub without npm (builds on fetch). npm 12 refuses git sources unless you
+say so:
 
 ```bash
-npx github:trevorrecker/skctl status
+npx --allow-git=all github:trevorrecker/skctl status
 ```
 
 Or from a clone (for hacking on it):
@@ -138,3 +142,25 @@ Add the dir once: Raycast → Settings → Extensions → Script Commands → **
 Directory**. The scripts are regenerated artifacts (a `paste: true` frontmatter flag
 surfaces snippet-style skills), so they are gitignored — run `skctl raycast sync`
 after cloning.
+
+## Release
+
+CI builds, tests and pack-checks every push and pull request on Node 18, 20, 22 and 24.
+
+Releases run on [changesets](https://github.com/changesets/changesets). Any change that
+users should see ships with a note:
+
+```bash
+npx changeset          # choose patch|minor|major, write the note
+```
+
+Merging to `main` opens or updates a `chore: release` pull request that bumps the
+version and folds the pending notes into `CHANGELOG.md`. Merging *that* publishes to
+npm with provenance and cuts the matching GitHub Release. Tooling-only changes take an
+empty changeset (`npx changeset --empty`) so the release stays quiet.
+
+Publishing authenticates with npm [trusted
+publishing](https://docs.npmjs.com/trusted-publishers) — no token, no secret. The package
+carries a trusted publisher for `trevorrecker/skctl` + `release.yml`, and the job requests
+`id-token: write`. The repo also needs **Settings → Actions → General → Allow GitHub
+Actions to create and approve pull requests** enabled, or the release PR never opens.
