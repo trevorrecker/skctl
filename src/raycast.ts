@@ -19,6 +19,9 @@ export const defaultRaycastDir = (): string =>
 const preamble = [
   `# ${RaycastSentinel} — do not edit; regenerate with \`skctl raycast sync\``,
   "",
+  "# pbcopy/pbpaste fall back to the C encoding when no locale is set, mangling non-ASCII",
+  "unset LC_ALL",
+  `export LC_CTYPE="UTF-8"`,
   `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"`,
   "if ! command -v node >/dev/null 2>&1; then",
   `  for dir in "$HOME"/.nvm/versions/node/*/bin; do`,
