@@ -27,6 +27,17 @@ test("generateRaycastScripts bakes the skill list into the paste dropdown", () =
   assert.match(paste.content, /"value":"commit"/);
 });
 
+test("every script forces a UTF-8 locale so pbcopy preserves non-ASCII bodies", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-raycast-"));
+  seedSkill(home, "commit");
+  const paths = resolveSkillPaths(home);
+
+  for (const script of generateRaycastScripts(paths)) {
+    assert.match(script.content, /^export LC_CTYPE="UTF-8"$/m, script.filename);
+    assert.match(script.content, /^unset LC_ALL$/m, script.filename);
+  }
+});
+
 test("syncRaycast writes executable scripts, is idempotent, and refuses foreign files", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-raycast-"));
   mkdirSync(resolveSkillPaths(home).sourceSkills, { recursive: true });
