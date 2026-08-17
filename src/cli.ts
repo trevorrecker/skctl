@@ -471,7 +471,7 @@ const applyResult = (
   // keeps its scripts current without adding a row to every report. Only a script
   // someone hand-edited is worth interrupting for.
   if (!opts.dryRun && raycastEnabled(args) && paths.scope === "global") {
-    const conflicts = syncRaycast(raycastTarget(args)).filter(
+    const conflicts = syncRaycast(paths, raycastTarget(args), config.activeTags).filter(
       (action) => action.kind === "conflict",
     );
     if (conflicts.length > 0) sections.push({ name: "raycast", actions: conflicts });
@@ -1130,7 +1130,7 @@ const raycastDispatch = (args: Args): CommandOutput => {
         {
           name: "raycast",
           note: shortPath(target),
-          actions: syncRaycast(target),
+          actions: syncRaycast(paths, target, loadConfig().activeTags),
         },
       ],
     },

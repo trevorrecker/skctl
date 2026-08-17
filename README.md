@@ -104,7 +104,6 @@ Global flags:
   instructions   4 ok
   skills        60 ok   2 removed
   commands      —
-  raycast        4 ok   ~/.config/skctl/raycast
 
   -  skills  matt-handoff  ~/.agents/skills/matt-handoff  broken link
   -  skills  matt-handoff  ~/.claude/skills/matt-handoff  broken link
@@ -287,13 +286,13 @@ The local copy has no upstream metadata.
 
 ## Raycast
 
-The scripts take a skill name as a free-text argument and ask skctl for the body at
-run time, so they never carry a copy of the skill list. They are written once and stay
-correct as skills come and go.
+`skctl apply` keeps the scripts current for global roots without reporting them, since
+Raycast is a machine-local convenience rather than part of the manifest. A script you
+edited by hand still shows up as a conflict. `skctl raycast sync` reports in full.
 
-`skctl apply` keeps them current for global roots without reporting them, since Raycast
-is a machine-local convenience rather than part of the manifest. A script you edited by
-hand still shows up as a conflict. `skctl raycast sync` reports in full.
+The skill dropdown is baked into each script's header, because Raycast reads an
+argument's options from the file before the script runs. That is why the files are
+rewritten whenever the skill list changes, and why apply does it quietly.
 
 ```bash
 skctl config set raycast off
