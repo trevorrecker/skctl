@@ -27,6 +27,8 @@
   },
   "files": [
     "dist",
+    "docs",
+    "raycast/README.md",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts"
   ],

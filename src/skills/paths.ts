@@ -12,6 +12,9 @@ export interface SkillPaths {
   sourceCommands: string;
   remotesDir: string;
   manifestPath: string;
+  instructionsSource: string;
+  instructionImports: string[];
+  instructionLinks: string[];
   agentsSkills: string;
   claudeSkills: string;
   skillLockPath: string;
@@ -20,25 +23,54 @@ export interface SkillPaths {
 }
 
 export const resolveSkillPaths = (
-  home: string = homedir(),
-  sourceRepo: string = join(home, "dev", "skills"),
-): SkillPaths => ({
-  scope: "global",
-  sourceRepo,
-  sourceSkills: join(sourceRepo, "skills"),
-  sourceCommands: join(sourceRepo, "commands"),
-  remotesDir: join(sourceRepo, "remotes"),
-  manifestPath: join(sourceRepo, "skills.config.json"),
-  agentsSkills: join(home, ".agents", "skills"),
-  claudeSkills: join(home, ".claude", "skills"),
-  skillLockPath: join(home, ".agents", ".skill-lock.json"),
-  commandDirs: {
-    claude: join(home, ".claude", "commands"),
-    codex: join(home, ".codex", "prompts"),
-    opencode: join(home, ".config", "opencode", "commands"),
-  },
-  commandHosts: [...AllHosts],
-});
+  home = homedir(),
+  sourceRepo = join(home, "dev", "skills"),
+  claudeConfigDir?: string,
+  codexHome?: string,
+  opencodeConfigDir?: string,
+  additionalInstructionLinks: readonly string[] = [],
+): SkillPaths => {
+  const useEnvironment = home === homedir();
+  const resolvedClaudeConfigDir =
+    claudeConfigDir ??
+    (useEnvironment ? process.env.CLAUDE_CONFIG_DIR : undefined) ??
+    join(home, ".claude");
+  const resolvedCodexHome =
+    codexHome ??
+    (useEnvironment ? process.env.CODEX_HOME : undefined) ??
+    join(home, ".codex");
+  const resolvedOpencodeConfigDir =
+    opencodeConfigDir ??
+    (useEnvironment ? process.env.OPENCODE_CONFIG_DIR : undefined) ??
+    join(home, ".config", "opencode");
+  return {
+    scope: "global",
+    sourceRepo,
+    sourceSkills: join(sourceRepo, "skills"),
+    sourceCommands: join(sourceRepo, "commands"),
+    remotesDir: join(sourceRepo, "remotes"),
+    manifestPath: join(sourceRepo, "skills.config.json"),
+    instructionsSource: join(sourceRepo, "instructions", "AGENTS.md"),
+    instructionImports: [join(home, "AGENTS.md"), join(home, "CLAUDE.md")],
+    instructionLinks: [
+      ...new Set([
+        join(resolvedClaudeConfigDir, "CLAUDE.md"),
+        join(resolvedCodexHome, "AGENTS.md"),
+        join(resolvedOpencodeConfigDir, "AGENTS.md"),
+        ...additionalInstructionLinks,
+      ]),
+    ],
+    agentsSkills: join(home, ".agents", "skills"),
+    claudeSkills: join(resolvedClaudeConfigDir, "skills"),
+    skillLockPath: join(home, ".agents", ".skill-lock.json"),
+    commandDirs: {
+      claude: join(resolvedClaudeConfigDir, "commands"),
+      codex: join(resolvedCodexHome, "prompts"),
+      opencode: join(resolvedOpencodeConfigDir, "commands"),
+    },
+    commandHosts: [...AllHosts],
+  };
+};
 
 export const resolveProjectPaths = (projectDir: string): SkillPaths => {
   const root = resolve(projectDir);
@@ -51,6 +83,9 @@ export const resolveProjectPaths = (projectDir: string): SkillPaths => {
     sourceCommands: join(agents, "commands"),
     remotesDir: join(agents, "remotes"),
     manifestPath: join(agents, "skills.config.json"),
+    instructionsSource: join(agents, "instructions", "AGENTS.md"),
+    instructionImports: [],
+    instructionLinks: [],
     agentsSkills: skills,
     claudeSkills: join(root, ".claude", "skills"),
     skillLockPath: join(agents, ".skill-lock.json"),

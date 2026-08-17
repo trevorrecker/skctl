@@ -51,22 +51,22 @@ export const ensureSymlink = (
       rmSync(linkPath);
       symlinkSync(desired, linkPath);
     }
-    return { kind: "replaced", detail: `${linkPath} -> ${desired}` };
+    return { kind: "replaced", detail: linkPath };
   }
   if (pathPresent(linkPath)) {
-    return { kind: "conflict", detail: `${linkPath} exists and is not a symlink` };
+    return { kind: "conflict", detail: linkPath, note: "exists and is not a symlink" };
   }
   if (!dryRun) {
     mkdirSync(dirname(linkPath), { recursive: true });
     symlinkSync(desired, linkPath);
   }
-  return { kind: "created", detail: `${linkPath} -> ${desired}` };
+  return { kind: "created", detail: linkPath };
 };
 
 export const removeIfSymlink = (linkPath: string, dryRun: boolean): Action => {
   if (!pathPresent(linkPath)) return { kind: "ok", detail: linkPath };
   if (!isSymlink(linkPath)) {
-    return { kind: "conflict", detail: `${linkPath} is a real path, left untouched` };
+    return { kind: "conflict", detail: linkPath, note: "is a real path, left untouched" };
   }
   if (!dryRun) rmSync(linkPath);
   return { kind: "removed", detail: linkPath };
