@@ -5,6 +5,7 @@ import { defaultManifest, saveManifest } from "./skills/manifest.js";
 
 export interface SkctlConfig {
   root?: string;
+  raycastEnabled?: boolean;
   raycastDir?: string;
   activeTags?: string[];
   instructionTargets?: string[];
@@ -41,6 +42,9 @@ export const loadConfig = (path: string = configPath()): SkctlConfig => {
     const config: SkctlConfig = {};
     if (typeof parsed.root === "string") config.root = parsed.root;
     if (typeof parsed.raycastDir === "string") config.raycastDir = parsed.raycastDir;
+    if (typeof parsed.raycastEnabled === "boolean") {
+      config.raycastEnabled = parsed.raycastEnabled;
+    }
     if (Array.isArray(parsed.activeTags)) {
       config.activeTags = parsed.activeTags.filter(
         (tag): tag is string => typeof tag === "string",
