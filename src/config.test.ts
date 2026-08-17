@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { initRoot, loadConfig, resolveRoot, saveConfig } from "./config.js";
+import {
+  initRoot,
+  loadConfig,
+  markRemoteRefreshed,
+  remoteRefreshDue,
+  resolveRoot,
+  saveConfig,
+  setInstructionTarget,
+  setTagActive,
+} from "./config.js";
 
 test("resolveRoot precedence: flag > env > config file", () => {
   const dir = mkdtempSync(join(tmpdir(), "skctl-config-"));
@@ -28,6 +37,28 @@ test("resolveRoot precedence: flag > env > config file", () => {
   });
 
   delete process.env.SKCTL_ROOT;
+});
+
+test("machine-local settings and remote refresh times round-trip", () => {
+  const dir = mkdtempSync(join(tmpdir(), "skctl-config-"));
+  const configFile = join(dir, "config.json");
+  const root = join(dir, "skills");
+  const now = new Date("2026-08-11T12:00:00.000Z");
+  let config = setTagActive({ remoteRefreshHours: 24 }, "work", true);
+  config = setInstructionTarget(config, "/custom/AGENTS.md", true);
+  config = markRemoteRefreshed(config, root, now);
+  saveConfig(config, configFile);
+
+  const loaded = loadConfig(configFile);
+  assert.deepEqual(loaded.activeTags, ["work"]);
+  assert.deepEqual(loaded.instructionTargets, ["/custom/AGENTS.md"]);
+  assert.equal(remoteRefreshDue(loaded, root, new Date("2026-08-12T11:59:00.000Z")), false);
+  assert.equal(remoteRefreshDue(loaded, root, new Date("2026-08-12T12:00:00.000Z")), true);
+  assert.deepEqual(setTagActive(loaded, "work", false).activeTags, []);
+  assert.deepEqual(
+    setInstructionTarget(loaded, "/custom/AGENTS.md", false).instructionTargets,
+    [],
+  );
 });
 
 test("resolveRoot throws when nothing is configured", () => {

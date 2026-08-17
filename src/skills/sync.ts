@@ -11,19 +11,18 @@ import { compileCommand, isGeneratedCommand } from "./commands.js";
 import { ensureSymlink, removeIfSymlink, symlinkTarget } from "./fsx.js";
 import { loadManifest, resolveEntry } from "./manifest.js";
 import { resolveRemoteSkills } from "./remotes.js";
+import { syncInstructions } from "./instructions.js";
 import type { Action, ResolvedEntry, SkillsManifest } from "./types.js";
 import type { SkillPaths } from "./paths.js";
 
 export interface SyncReport {
   dryRun: boolean;
+  instructions: Action[];
   skills: Action[];
   commands: Action[];
 }
 
-const tag = (name: string, action: Action): Action => ({
-  kind: action.kind,
-  detail: `${name}: ${action.detail}`,
-});
+const tag = (name: string, action: Action): Action => ({ ...action, subject: name });
 
 export const listSkillNames = (dir: string): string[] => {
   if (!existsSync(dir)) return [];
@@ -83,7 +82,7 @@ const writeCommandFile = (
     const current = readFileSync(dest, "utf-8");
     if (current === content) return { kind: "ok", detail: dest };
     if (!isGeneratedCommand(current)) {
-      return { kind: "conflict", detail: `${dest} exists and was not generated` };
+      return { kind: "conflict", detail: dest, note: "exists and was not generated" };
     }
   }
   if (!dryRun) {
@@ -96,7 +95,7 @@ const writeCommandFile = (
 const removeCommandFile = (dest: string, dryRun: boolean): Action => {
   if (!existsSync(dest)) return { kind: "ok", detail: dest };
   if (!isGeneratedCommand(readFileSync(dest, "utf-8"))) {
-    return { kind: "conflict", detail: `${dest} was not generated, left untouched` };
+    return { kind: "conflict", detail: dest, note: "was not generated, left untouched" };
   }
   if (!dryRun) rmSync(dest);
   return { kind: "removed", detail: dest };
@@ -136,7 +135,12 @@ const pruneOrphanCommands = (
       const full = join(dir, file);
       if (!isGeneratedCommand(readFileSync(full, "utf-8"))) continue;
       if (!dryRun) rmSync(full);
-      actions.push({ kind: "removed", detail: `${full} (orphaned)` });
+      actions.push({
+        kind: "removed",
+        detail: full,
+        subject: file.slice(0, -3),
+        note: "orphaned",
+      });
     }
   }
   return actions;
@@ -157,7 +161,12 @@ const pruneStaleRemoteLinks = (
     if (target === undefined) continue;
     if (!resolve(dirname(path), target).startsWith(remotesDir + sep)) continue;
     if (!dryRun) rmSync(path);
-    actions.push({ kind: "removed", detail: `${path} (remote skill unmasked)` });
+    actions.push({
+      kind: "removed",
+      detail: path,
+      subject: entry.name,
+      note: "remote skill unmasked",
+    });
   }
   return actions;
 };
@@ -169,7 +178,12 @@ const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
     const path = join(dir, entry.name);
     if (entry.isSymbolicLink() && !existsSync(path)) {
       if (!dryRun) rmSync(path);
-      actions.push({ kind: "removed", detail: `${path} (broken link)` });
+      actions.push({
+        kind: "removed",
+        detail: path,
+        subject: entry.name,
+        note: "broken link",
+      });
     }
   }
   return actions;
@@ -179,10 +193,16 @@ export const sync = (
   paths: SkillPaths,
   manifest: SkillsManifest = loadManifest(paths.manifestPath),
   dryRun = false,
+  activeTags: readonly string[] = [],
 ): SyncReport => {
+  const instructions = syncInstructions(paths, dryRun);
   const localNames = listSkillNames(paths.sourceSkills);
   const skills = localNames.flatMap((name) =>
-    syncSkill(paths, resolveEntry(name, manifest.skills[name], manifest), dryRun),
+    syncSkill(
+      paths,
+      resolveEntry(name, manifest.skills[name], manifest, activeTags),
+      dryRun,
+    ),
   );
 
   const remotes = resolveRemoteSkills(paths, manifest);
@@ -193,7 +213,8 @@ export const sync = (
     if (localSet.has(skill.name)) {
       skills.push({
         kind: "conflict",
-        detail: `${skill.name}: local skill shadows remote '${skill.remote}'`,
+        subject: skill.name,
+        detail: `local skill shadows remote '${skill.remote}'`,
       });
       continue;
     }
@@ -201,7 +222,7 @@ export const sync = (
     skills.push(
       ...syncSkill(
         paths,
-        resolveEntry(skill.name, manifest.skills[skill.name], manifest),
+        resolveEntry(skill.name, manifest.skills[skill.name], manifest, activeTags),
         dryRun,
         skill.sourceDir,
       ),
@@ -224,5 +245,5 @@ export const sync = (
   );
   commands.push(...pruneOrphanCommands(paths, new Set(commandNames), dryRun));
 
-  return { dryRun, skills, commands };
+  return { dryRun, instructions, skills, commands };
 };

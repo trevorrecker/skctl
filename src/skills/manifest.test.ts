@@ -23,11 +23,25 @@ test("resolveEntry defaults to enabled with the manifest's default hosts", () =>
     name: "a",
     enabled: true,
     hosts: ["claude", "codex", "opencode"],
+    tags: [],
   });
   assert.equal(resolveEntry("b", { enabled: false }, manifest).enabled, false);
   assert.deepEqual(
     resolveEntry("c", { hosts: ["claude"] }, manifest).hosts,
     ["claude"],
+  );
+});
+
+test("resolveEntry enables tagged skills when any tag is active", () => {
+  const manifest = defaultManifest();
+  const entry = { tags: ["work", "laptop"] };
+
+  assert.equal(resolveEntry("a", entry, manifest).enabled, false);
+  assert.equal(resolveEntry("a", entry, manifest, ["work"]).enabled, true);
+  assert.equal(resolveEntry("a", entry, manifest, ["desktop"]).enabled, false);
+  assert.equal(
+    resolveEntry("a", { ...entry, enabled: false }, manifest, ["work"]).enabled,
+    false,
   );
 });
 

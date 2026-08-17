@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter.js";
+import type { ParsedFrontmatter } from "./frontmatter.js";
 import type { SkillPaths } from "./paths.js";
 
 export interface SkillFields {
@@ -48,12 +49,8 @@ const skillBodyPlaceholder = (name: string): string =>
 const commandBodyPlaceholder = (name: string): string =>
   `TODO what /${name} does with $ARGUMENTS.`;
 
-const parseBody = (
-  body: string | undefined,
-): { data: Record<string, unknown>; content: string } => {
-  if (body === undefined) return { data: {}, content: "" };
-  return parseFrontmatter(body);
-};
+const parseBody = (body: string | undefined): ParsedFrontmatter =>
+  body === undefined ? { data: {}, content: "" } : parseFrontmatter(body);
 
 export const renderSkill = (fields: SkillFields): string => {
   const { data, content } = parseBody(fields.body);

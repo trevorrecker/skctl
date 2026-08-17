@@ -18,6 +18,8 @@ const isImportable = (dir: string): boolean => {
 const externallyManaged = (skillLockPath: string): Set<string> => {
   if (!existsSync(skillLockPath)) return new Set();
   try {
+    // SAFETY: only `skills` is read, and it is defaulted before use. Any other shape,
+    // including a non-object, throws into the catch below and yields an empty set.
     const parsed = JSON.parse(readFileSync(skillLockPath, "utf-8")) as {
       skills?: Record<string, unknown>;
     };

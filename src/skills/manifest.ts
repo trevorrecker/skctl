@@ -18,6 +18,12 @@ const parseHosts = (value: unknown): Host[] | undefined => {
   return hosts.length > 0 ? hosts : undefined;
 };
 
+const parseStrings = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((item): item is string => typeof item === "string");
+  return strings.length > 0 ? [...new Set(strings)] : undefined;
+};
+
 const normalizeEntry = (value: unknown): ManifestEntry => {
   if (typeof value !== "object" || value === null) return {};
   const record = value as Record<string, unknown>;
@@ -25,6 +31,8 @@ const normalizeEntry = (value: unknown): ManifestEntry => {
   if (typeof record.enabled === "boolean") entry.enabled = record.enabled;
   const hosts = parseHosts(record.hosts);
   if (hosts) entry.hosts = hosts;
+  const tags = parseStrings(record.tags);
+  if (tags) entry.tags = tags;
   return entry;
 };
 
@@ -83,10 +91,14 @@ export const resolveEntry = (
   name: string,
   entry: ManifestEntry | undefined,
   manifest: SkillsManifest,
+  activeTags: readonly string[] = [],
 ): ResolvedEntry => ({
   name,
-  enabled: entry?.enabled ?? true,
+  enabled:
+    (entry?.enabled ?? true) &&
+    (entry?.tags === undefined || entry.tags.some(tag => activeTags.includes(tag))),
   hosts: entry?.hosts ?? manifest.defaultHosts,
+  tags: entry?.tags ?? [],
 });
 
 export const setEnabled = (
@@ -117,6 +129,24 @@ export const setHosts = (
     [collection]: {
       ...manifest[collection],
       [name]: { ...current, hosts },
+    },
+  };
+};
+
+export const setTags = (
+  manifest: SkillsManifest,
+  name: string,
+  tags: string[],
+): SkillsManifest => {
+  const current = manifest.skills[name] ?? {};
+  const next = { ...current };
+  if (tags.length > 0) next.tags = [...new Set(tags)].sort();
+  else delete next.tags;
+  return {
+    ...manifest,
+    skills: {
+      ...manifest.skills,
+      [name]: next,
     },
   };
 };

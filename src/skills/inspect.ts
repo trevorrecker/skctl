@@ -11,6 +11,7 @@ export interface SkillInfo {
   name: string;
   enabled: boolean;
   hosts: Host[];
+  tags: string[];
   paste: boolean;
   description: string;
   remote?: string;
@@ -69,15 +70,17 @@ export const skillInfo = (
   paths: SkillPaths,
   name: string,
   remote?: string,
+  activeTags: readonly string[] = [],
 ): SkillInfo => {
   const manifest = loadManifest(paths.manifestPath);
-  const resolved = resolveEntry(name, manifest.skills[name], manifest);
+  const resolved = resolveEntry(name, manifest.skills[name], manifest, activeTags);
   const path = skillMarkdownPath(paths, manifest, name);
   const data = readFrontmatter(path);
   return {
     name,
     enabled: resolved.enabled,
     hosts: resolved.hosts,
+    tags: resolved.tags,
     paste: data.paste === true,
     description: typeof data.description === "string" ? data.description : "",
     remote,
@@ -85,14 +88,21 @@ export const skillInfo = (
   };
 };
 
-export const listSkills = (paths: SkillPaths, onlyPaste = false): SkillInfo[] => {
+export const listSkills = (
+  paths: SkillPaths,
+  onlyPaste = false,
+  activeTags: readonly string[] = [],
+): SkillInfo[] => {
   const manifest = loadManifest(paths.manifestPath);
   const localNames = listSkillNames(paths.sourceSkills);
   const localSet = new Set(localNames);
   const remoteSkills = resolveRemoteSkills(paths, manifest)
     .skills.filter((skill) => !localSet.has(skill.name))
-    .map((skill) => skillInfo(paths, skill.name, skill.remote));
-  return [...localNames.map((name) => skillInfo(paths, name)), ...remoteSkills]
+    .map(skill => skillInfo(paths, skill.name, skill.remote, activeTags));
+  return [
+    ...localNames.map(name => skillInfo(paths, name, undefined, activeTags)),
+    ...remoteSkills,
+  ]
     .sort((a, b) => a.name.localeCompare(b.name))
     .filter((info) => !onlyPaste || info.paste);
 };

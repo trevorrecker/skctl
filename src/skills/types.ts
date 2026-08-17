@@ -7,6 +7,7 @@ export type Collection = "skills" | "commands";
 export interface ManifestEntry {
   enabled?: boolean;
   hosts?: Host[];
+  tags?: string[];
 }
 
 export interface RemoteEntry {
@@ -25,6 +26,7 @@ export interface ResolvedEntry {
   name: string;
   enabled: boolean;
   hosts: Host[];
+  tags: string[];
 }
 
 export type ActionKind = "created" | "replaced" | "removed" | "ok" | "conflict";
@@ -32,4 +34,6 @@ export type ActionKind = "created" | "replaced" | "removed" | "ok" | "conflict";
 export interface Action {
   kind: ActionKind;
   detail: string;
+  subject?: string;
+  note?: string;
 }

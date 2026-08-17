@@ -115,3 +115,19 @@ test("disabling a skill removes its links but leaves the source", () => {
   assert.equal(existsSync(join(paths.claudeSkills, "demo-skill")), false);
   assert.ok(existsSync(join(paths.sourceSkills, "demo-skill", "SKILL.md")));
 });
+
+test("tagged skills materialize only when one of their tags is active", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-sync-"));
+  seedRepo(home);
+  const paths = resolveSkillPaths(home);
+  const manifest = {
+    ...defaultManifest(),
+    skills: { "demo-skill": { tags: ["work"] } },
+  };
+
+  sync(paths, manifest, false);
+  assert.equal(existsSync(join(paths.agentsSkills, "demo-skill")), false);
+
+  sync(paths, manifest, false, ["work"]);
+  assert.ok(existsSync(join(paths.agentsSkills, "demo-skill", "SKILL.md")));
+});

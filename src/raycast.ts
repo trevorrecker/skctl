@@ -88,8 +88,11 @@ sleep 0.25
 printf '%s' "$previous" | pbcopy
 echo "Pasted skill: $name"`;
 
-export const generateRaycastScripts = (paths: SkillPaths): RaycastScript[] => {
-  const skills = listSkills(paths);
+export const generateRaycastScripts = (
+  paths: SkillPaths,
+  activeTags: readonly string[] = [],
+): RaycastScript[] => {
+  const skills = listSkills(paths, false, activeTags);
   const dropdown = skillDropdown(skills);
   const pasteDropdown = skillDropdown(
     skills.filter((skill) => skill.paste).length > 0
@@ -141,20 +144,29 @@ const write = (dest: string, content: string): void => {
   chmodSync(dest, 0o755);
 };
 
-export const syncRaycast = (paths: SkillPaths, targetDir: string): Action[] => {
+export const syncRaycast = (
+  paths: SkillPaths,
+  targetDir: string,
+  activeTags: readonly string[] = [],
+): Action[] => {
   mkdirSync(targetDir, { recursive: true });
-  return generateRaycastScripts(paths).map((script) => {
+  return generateRaycastScripts(paths, activeTags).map((script) => {
     const dest = join(targetDir, script.filename);
     if (existsSync(dest)) {
       const current = readFileSync(dest, "utf-8");
-      if (current === script.content) return { kind: "ok", detail: dest };
+      if (current === script.content) return { kind: "ok", detail: dest, subject: script.filename };
       if (!isGenerated(current)) {
-        return { kind: "conflict", detail: `${dest} exists and was not generated` };
+        return {
+          kind: "conflict",
+          detail: dest,
+          subject: script.filename,
+          note: "exists and was not generated",
+        };
       }
       write(dest, script.content);
-      return { kind: "replaced", detail: dest };
+      return { kind: "replaced", detail: dest, subject: script.filename };
     }
     write(dest, script.content);
-    return { kind: "created", detail: dest };
+    return { kind: "created", detail: dest, subject: script.filename };
   });
 };
