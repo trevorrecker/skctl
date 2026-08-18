@@ -66,7 +66,7 @@ Root resolution uses this order:
 
 ```text
 skctl init [dir]
-skctl config [set root|raycast|refresh <value>]
+skctl config [set root <dir>|raycast on|off|<dir>|refresh <hours>]
 skctl create skill|command [name]
 skctl get skills|commands|remotes|tags [name] [-o wide|name|json]
 skctl get skill|command <name> -o body|raw

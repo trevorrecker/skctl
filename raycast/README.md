@@ -1,7 +1,13 @@
 # Raycast script commands
 
-`skctl raycast sync` generates the `.sh` files in this directory. `skctl apply` also
-runs the sync. Git ignores the generated files.
+`skctl raycast sync` generates the `.sh` files in this directory and reports what it
+wrote. `skctl apply` keeps them current too, but quietly: Raycast is a machine-local
+convenience rather than part of the manifest, so it stays out of the apply report unless
+a script you edited by hand blocks the sync. Git ignores the generated files.
+
+Turn the whole thing off with `skctl config set raycast off`, back on with `on`, or point
+it elsewhere with `skctl config set raycast <dir>`. `skctl apply --no-raycast` skips it
+for a single run.
 
 ## Add to Raycast
 
