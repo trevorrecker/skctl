@@ -459,10 +459,10 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["enable|disable skill|command|tag <name>", "toggle an entry, then apply"],
       ["tag|untag skill <name> <tag...>", "edit a skill's shared tags"],
       ["instruction list|add|remove [path]", "manage machine-local instruction targets"],
-      ["config [set root|raycast|refresh <value>]", "show or update configuration"],
+      ["config [set root|raycast|refresh <value>]", "show or update configuration; raycast takes on, off, or a directory"],
       ["refresh", "update root, remotes, and client targets"],
       ["schedule install [hours]|status|remove", "manage the background refresh job"],
-      ["raycast sync [--dir <path>]", "regenerate Raycast script commands"],
+      ["raycast sync [--dir <path>]", "regenerate the Raycast script commands and report"],
     ],
   ],
 ];
@@ -494,7 +494,7 @@ export const renderUsage = (): string =>
       ["--dry-run", "plan without writing, on apply, import, and detach"],
       ["-q, --quiet", "print conflicts and the summary only"],
       ["--no-color", "disable color; NO_COLOR and FORCE_COLOR are honored"],
-      ["--no-raycast", "skip the Raycast sync during apply"],
+      ["--no-raycast", "skip the Raycast sync for this run"],
       ["--skills <a,b>", "narrow what `remote add` selects"],
     ]),
     flagGroup("CREATE FLAGS", [
