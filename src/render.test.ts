@@ -84,3 +84,95 @@ test("status separates issues from notes and names the totals", () => {
   assert.match(text, /✖ 1 issue · 1 note/);
   assert.match(renderStatus({ ...report, issues: [] }, "/repo"), /✔ no issues/);
 });
+
+const fanOut = (): ApplyResult => ({
+  verb: "apply",
+  dryRun: false,
+  root: "/repo",
+  hosts: ["claude", "codex"],
+  sections: [
+    {
+      name: "instructions",
+      actions: [
+        { kind: "ok", detail: "/home/.claude/AGENTS.md", subject: "AGENTS.md" },
+        { kind: "ok", detail: "/home/.codex/AGENTS.md", subject: "AGENTS.md" },
+        { kind: "ok", detail: "/home/.config/opencode/AGENTS.md", subject: "AGENTS.md" },
+      ],
+    },
+    {
+      name: "skills",
+      actions: [
+        { kind: "ok", detail: "/home/.agents/skills/alpha", subject: "alpha" },
+        { kind: "ok", detail: "/home/.claude/skills/alpha", subject: "alpha" },
+        { kind: "created", detail: "/home/.agents/skills/bro", subject: "bro" },
+        { kind: "created", detail: "/home/.claude/skills/bro", subject: "bro" },
+      ],
+    },
+  ],
+});
+
+test("counts name the things that moved, not the links that moved them", () => {
+  const text = renderApply(fanOut());
+  assert.match(text, /instructions {3}1 ok {3}3 links/);
+  assert.match(text, /skills {9}1 ok {3}1 created {3}4 links/);
+  assert.match(text, /✔ 1 change · 2 in sync/);
+});
+
+test("one thing written to several places is a single change-log row", () => {
+  const text = renderApply(fanOut());
+  assert.match(text, /\+ {2}skills {2}bro {2}\/home\/\.agents\/skills, \/home\/\.claude\/skills/);
+  assert.equal(text.split("\n").filter((line) => line.includes("bro")).length, 1);
+});
+
+test("the links total is omitted when each thing took exactly one operation", () => {
+  const oneEach: ApplyResult = {
+    ...fanOut(),
+    sections: [
+      {
+        name: "commands",
+        actions: [
+          { kind: "ok", detail: "/home/.claude/commands/greet.md", subject: "greet/claude" },
+          { kind: "ok", detail: "/home/.codex/prompts/greet.md", subject: "greet/codex" },
+        ],
+      },
+    ],
+  };
+  const text = renderApply(oneEach);
+  assert.match(text, /commands {3}2 ok/);
+  assert.doesNotMatch(text, /links/);
+});
+
+test("a thing that half succeeded reports its worst kind and points at that place", () => {
+  const mixed: ApplyResult = {
+    verb: "apply",
+    dryRun: false,
+    root: "/repo",
+    hosts: ["claude"],
+    sections: [
+      {
+        name: "skills",
+        actions: [
+          { kind: "ok", detail: "/home/.agents/skills/bro", subject: "bro" },
+          {
+            kind: "conflict",
+            detail: "/home/.claude/skills/bro",
+            subject: "bro",
+            note: "exists and is not a symlink",
+          },
+        ],
+      },
+    ],
+  };
+  const text = renderApply(mixed);
+  assert.match(text, /skills {3}1 conflict {3}2 links/);
+  assert.match(text, /! {2}skills {2}bro {2}\/home\/\.claude\/skills\/bro/);
+  assert.doesNotMatch(text, /\.agents/);
+  assert.equal(conflictCount(mixed), 1);
+  assert.equal(applyData(mixed).summary.inSync, 0);
+});
+
+test("dry run does not say nothing to do pending", () => {
+  const clean: ApplyResult = { ...fanOut(), dryRun: true, sections: [] };
+  assert.match(renderApply(clean), /nothing to do ·/);
+  assert.doesNotMatch(renderApply(clean), /pending/);
+});

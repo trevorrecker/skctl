@@ -101,15 +101,20 @@ Global flags:
 ```text
   apply  ~/dev/skills → claude, codex, opencode
 
-  instructions   4 ok
-  skills        60 ok   2 removed
-  commands      —
+  instructions    1 ok                  4 links
+  skills         33 ok    1 created    68 links
+  commands        —
 
-  -  skills  matt-handoff  ~/.agents/skills/matt-handoff  broken link
-  -  skills  matt-handoff  ~/.claude/skills/matt-handoff  broken link
+  +  skills  bro    ~/.agents/skills, ~/.claude/skills
 
-  ✔ 2 changes · 64 in sync
+  ✔ 1 change · 34 in sync
 ```
+
+The counts name things rather than filesystem operations: one instruction linked into four
+client paths reads as `1 ok`, with `4 links` alongside. A skill written to both
+`~/.agents/skills` and `~/.claude/skills` is one row in the change log, not two. When a
+thing half succeeds, its row reports the worst outcome and points at the place that
+failed.
 
 Color turns on when stdout is a terminal. `NO_COLOR`, `FORCE_COLOR`, and `--no-color`
 override that.
