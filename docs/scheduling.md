@@ -31,13 +31,21 @@ skctl schedule remove
 The launch agent lives at `~/Library/LaunchAgents/dev.skctl.refresh.plist`. Output
 goes to `~/.config/skctl/refresh.log`, or the matching `XDG_CONFIG_HOME` location.
 
+The job runs with `--quiet --no-color`, so each run leaves one summary line in the log
+and nothing else unless something conflicted. A conflicting run exits non-zero, which
+`launchctl print` reports as the last exit status.
+
 ## Other systems
 
 Run this command from the system scheduler:
 
 ```bash
-skctl refresh --no-raycast
+skctl refresh --no-raycast --quiet --no-color
 ```
+
+`--quiet` keeps the log to a summary line per run, and `--no-color` stops ANSI escapes
+reaching a file. Drop `--no-raycast` if you want the Raycast scripts refreshed too, or
+turn the feature off once with `skctl config set raycast off`.
 
 The scheduler needs the same `HOME` and client config environment used when skctl
 applies links interactively.

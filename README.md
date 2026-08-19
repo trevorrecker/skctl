@@ -93,6 +93,7 @@ Global flags:
 - `-o, --output <fmt>` picks `wide` (default), `name`, `json`, `body`, or `raw`.
 - `-q, --quiet` prints conflicts and the closing summary only.
 - `--no-color` turns styling off.
+- `--no-raycast` skips the Raycast sync for one run.
 
 ## Output
 
