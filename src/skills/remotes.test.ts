@@ -182,7 +182,10 @@ test("updateRoot fast-forwards a clean skills root", () => {
   const action = updateRoot(resolveSkillPaths(home, root));
 
   assert.equal(action.kind, "replaced");
-  assert.equal(readFileSync(join(root, "README.md"), "utf-8"), "two\n");
+  assert.equal(
+    readFileSync(join(root, "README.md"), "utf-8").replaceAll("\r\n", "\n"),
+    "two\n",
+  );
   writeFileSync(join(root, "local.txt"), "dirty\n");
   assert.equal(updateRoot(resolveSkillPaths(home, root)).kind, "conflict");
 });

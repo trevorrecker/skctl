@@ -68,8 +68,10 @@ export const shortPath = (path: string): string => {
   return `~/${fromHome.split(sep).join("/")}`;
 };
 
-export const shorten = (text: string): string =>
-  shortenable ? text.split(home).join("~") : text;
+export const shorten = (text: string): string => {
+  if (!shortenable) return text;
+  return text.split(home).join("~").split(sep).join("/");
+};
 
 const maxColumnWidth = 52;
 
