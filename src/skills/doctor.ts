@@ -5,7 +5,7 @@ import { loadManifest } from "./manifest.js";
 import { loadOverlays } from "./overlays.js";
 import { resolveRemoteSkills, selectorName } from "./remotes.js";
 import { lockedSkillNames } from "./skill-lock.js";
-import { listCommandNames, listSkillNames } from "./sync.js";
+import { GeneratedIgnoreEntries, listCommandNames, listSkillNames } from "./sync.js";
 import { AllSurfaces } from "./types.js";
 import type { Surface } from "./types.js";
 import type { SkillPaths } from "./paths.js";
@@ -163,17 +163,20 @@ const scanOrphans = (paths: SkillPaths, report: DoctorReport): void => {
   }
 };
 
-const scanBuild = (paths: SkillPaths, report: DoctorReport): void => {
-  const ignored =
-    existsSync(paths.gitignorePath) &&
-    readFileSync(paths.gitignorePath, "utf-8")
-      .split(/\r?\n/)
-      .some((line) => line.trim() === ".build/");
-  if (!ignored) {
+const scanGeneratedIgnores = (paths: SkillPaths, report: DoctorReport): void => {
+  const ignored = new Set(
+    existsSync(paths.gitignorePath)
+      ? readFileSync(paths.gitignorePath, "utf-8")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+      : [],
+  );
+  const missing = GeneratedIgnoreEntries.filter((entry) => !ignored.has(entry));
+  if (missing.length > 0) {
     report.issues.push({
-      label: "build not ignored",
+      label: "generated state not ignored",
       detail: paths.gitignorePath,
-      hint: "run `skctl apply` to add .build/",
+      hint: `run \`skctl apply\` to add ${missing.join(", ")}`,
     });
   }
 };
@@ -243,6 +246,6 @@ export const doctor = (paths: SkillPaths): DoctorReport => {
   if (paths.scope === "global") scanAgentsSkills(paths, report);
   scanInstructions(paths, report);
   scanOrphans(paths, report);
-  scanBuild(paths, report);
+  scanGeneratedIgnores(paths, report);
   return report;
 };

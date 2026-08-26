@@ -250,7 +250,7 @@ test("deleting a skill from source clears its build and its links", () => {
   assert.equal(pathPresent(join(paths.surfaceDirs.claude, "demo-skill")), false);
 });
 
-test("apply ignores the build directory in the skills root", () => {
+test("apply ignores generated state in the skills root", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-sync-"));
   seedRepo(home);
   const paths = resolveSkillPaths(home);
@@ -259,11 +259,25 @@ test("apply ignores the build directory in the skills root", () => {
   sync(paths, defaultManifest(), false);
 
   const ignored = readFileSync(paths.gitignorePath, "utf-8");
+  assert.doesNotMatch(ignored, /^\n/);
   assert.match(ignored, /^\.DS_Store$/m);
   assert.match(ignored, /^\.build\/$/m);
+  assert.match(ignored, /^remotes\/$/m);
 
   sync(paths, defaultManifest(), false);
-  assert.equal(ignored.match(/\.build\//g)?.length, 1);
+  const reapplied = readFileSync(paths.gitignorePath, "utf-8");
+  assert.equal(reapplied.match(/\.build\//g)?.length, 1);
+  assert.equal(reapplied.match(/remotes\//g)?.length, 1);
+});
+
+test("apply creates the root ignore file without a leading blank line", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-sync-"));
+  seedRepo(home);
+  const paths = resolveSkillPaths(home);
+
+  sync(paths, defaultManifest(), false);
+
+  assert.doesNotMatch(readFileSync(paths.gitignorePath, "utf-8"), /^\n/);
 });
 
 test("tagged skills materialize only when one of their tags is active", () => {

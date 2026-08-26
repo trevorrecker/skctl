@@ -61,9 +61,9 @@ Every enabled skill compiles on each apply into
   directory.
 - Each client path links directly to its compiled build.
 
-`.build/` is generated. `skctl apply` adds it to the skills root's `.gitignore`, and
-`skctl status` reports a root missing that entry. Editing a file under `.build/` accomplishes
-nothing; the next apply overwrites it.
+`.build/` and the remote clones under `remotes/` are generated. `skctl apply` adds both
+directories to the skills root's `.gitignore`, and `skctl status` reports either missing
+entry. Editing a file under `.build/` accomplishes nothing; the next apply overwrites it.
 
 Compilation removes skctl's own `paste` and `tags` keys before a client reads the file.
 

@@ -186,20 +186,24 @@ const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
   return actions;
 };
 
-const buildIgnoreEntry = ".build/";
+export const GeneratedIgnoreEntries = [".build/", "remotes/"] as const;
 
-export const ensureBuildIgnored = (paths: SkillPaths, dryRun: boolean): Action => {
+export const ensureGeneratedIgnored = (paths: SkillPaths, dryRun: boolean): Action => {
   const current = existsSync(paths.gitignorePath)
     ? readFileSync(paths.gitignorePath, "utf-8")
     : "";
-  if (current.split(/\r?\n/).some((line) => line.trim() === buildIgnoreEntry)) {
+  const currentEntries = new Set(current.split(/\r?\n/).map((line) => line.trim()));
+  const missingEntries = GeneratedIgnoreEntries.filter((entry) => !currentEntries.has(entry));
+  if (missingEntries.length === 0) {
     return { kind: "ok", subject: ".gitignore", detail: paths.gitignorePath };
   }
   const next = current === "" || current.endsWith("\n") ? current : `${current}\n`;
   if (!dryRun) {
+    const separator = current === "" ? "" : "\n";
+    const generated = `# Generated builds and remote clones managed by \`skctl\`\n${missingEntries.join("\n")}\n`;
     writeFileSync(
       paths.gitignorePath,
-      `${next}\n# Compiled per-surface skills written by \`skctl apply\`\n${buildIgnoreEntry}\n`,
+      `${next}${separator}${generated}`,
       "utf-8",
     );
   }
@@ -207,7 +211,7 @@ export const ensureBuildIgnored = (paths: SkillPaths, dryRun: boolean): Action =
     kind: current === "" ? "created" : "replaced",
     subject: ".gitignore",
     detail: paths.gitignorePath,
-    note: `ignored ${buildIgnoreEntry}`,
+    note: `ignored ${missingEntries.join(", ")}`,
   };
 };
 
@@ -220,7 +224,7 @@ export const sync = (
   const instructions = syncInstructions(paths, dryRun);
   const { overlays, problems } = loadOverlays(paths);
   const built = new Map<Surface, Set<string>>();
-  const skills: Action[] = [...problems, ensureBuildIgnored(paths, dryRun)];
+  const skills: Action[] = [...problems, ensureGeneratedIgnored(paths, dryRun)];
 
   const localNames = listSkillNames(paths.sourceSkills);
   for (const name of localNames) {

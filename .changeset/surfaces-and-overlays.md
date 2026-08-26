@@ -22,8 +22,8 @@ files link back to source, so a skill's own `scripts/` stays editable in one pla
   across surfaces is not, since that is the point.
 - `skctl describe skill` shows which surfaces a skill compiles to and which clients read it
   beyond the hosts you asked for.
-- `skctl apply` adds `.build/` to the skills root's `.gitignore`, and `skctl status` reports a
-  root that is missing it.
+- `skctl apply` keeps generated `.build/` and `remotes/` state out of the skills root's Git
+  history, and `skctl status` reports a root missing either ignore entry.
 
 Remote selections may be path-qualified, so a multi-plugin repository like
 `github.com/cursor/plugins` works: `--skills pstack/unslop,pstack/bro`. `skctl describe remote`

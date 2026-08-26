@@ -31,3 +31,27 @@ test("doctor reports managed links that point at the wrong skill build", () => {
   const report = doctor(paths);
   assert.ok(report.issues.some((issue) => issue.label === "drift" && issue.detail === link));
 });
+
+test("doctor reports generated state missing from the root ignore file", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-doctor-"));
+  const paths = resolveSkillPaths(home);
+  mkdirSync(paths.sourceRepo, { recursive: true });
+  saveManifest(paths.manifestPath, defaultManifest());
+  writeFileSync(paths.gitignorePath, ".build/\n");
+
+  const report = doctor(paths);
+
+  assert.ok(
+    report.issues.some(
+      (issue) =>
+        issue.label === "generated state not ignored" && issue.hint?.includes("remotes/"),
+    ),
+  );
+
+  sync(paths, defaultManifest(), false);
+  const applied = doctor(paths);
+  assert.equal(
+    applied.issues.some((issue) => issue.label === "generated state not ignored"),
+    false,
+  );
+});
