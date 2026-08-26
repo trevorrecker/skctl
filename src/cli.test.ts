@@ -242,3 +242,50 @@ test("CLI adds a remote from a url, then drops it again", () => {
   assert.equal(existsSync(join(root, "remotes", "anti-slop")), false);
   assert.equal(run("status").status, 0);
 });
+
+test("apply keeps the raycast scripts current without reporting them", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
+  const home = join(scratch, "home");
+  const root = join(scratch, "skills-root");
+  const raycast = join(scratch, "raycast");
+  mkdirSync(home, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: join(scratch, "config"),
+    CLAUDE_CONFIG_DIR: join(home, "claude"),
+    CODEX_HOME: join(home, "codex"),
+    OPENCODE_CONFIG_DIR: join(home, "opencode"),
+  };
+  const run = (...args: string[]): { output: string; status: number } => {
+    const result = spawnSync(process.execPath, [cli, ...args, "--dir", raycast], {
+      encoding: "utf-8",
+      env,
+    });
+    return { output: `${result.stdout}${result.stderr}`, status: result.status ?? 0 };
+  };
+
+  run("init", root);
+  run("create", "skill", "alpha", "--no-paste");
+  assert.doesNotMatch(run("apply").output, /raycast/);
+
+  // The dropdown has to pick the new skill up even though apply stays quiet about it.
+  run("create", "skill", "beta", "--no-paste");
+  const second = run("apply");
+  assert.doesNotMatch(second.output, /raycast/);
+  assert.equal(second.status, 0);
+  const pasteScript = readFileSync(join(raycast, "skctl-paste.sh"), "utf-8");
+  assert.match(pasteScript, /"value":"beta"/);
+
+  // A script someone edited by hand is still worth interrupting for.
+  writeFileSync(join(raycast, "skctl-apply.sh"), "#!/bin/bash\necho mine\n");
+  const conflicted = run("apply");
+  assert.match(conflicted.output, /raycast/);
+  assert.match(conflicted.output, /1 conflict/);
+  assert.equal(conflicted.status, 1);
+
+  // Turned off, skctl leaves the directory alone entirely.
+  run("config", "set", "raycast", "off");
+  assert.doesNotMatch(run("apply").output, /raycast/);
+  assert.equal(readFileSync(join(raycast, "skctl-apply.sh"), "utf-8"), "#!/bin/bash\necho mine\n");
+});

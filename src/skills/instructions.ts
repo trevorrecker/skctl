@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, relative } from "node:path";
+import { basename, dirname, relative } from "node:path";
 import {
   ensureSymlink,
   isSymlink,
@@ -36,9 +36,11 @@ export const syncInstructions = (
   dryRun: boolean,
 ): Action[] => {
   if (!existsSync(paths.instructionsSource)) return [];
-  return uniqueLinks(paths).map(path =>
-    ensureSymlink(path, paths.instructionsSource, dryRun),
-  );
+  const subject = basename(paths.instructionsSource);
+  return uniqueLinks(paths).map(path => ({
+    ...ensureSymlink(path, paths.instructionsSource, dryRun),
+    subject,
+  }));
 };
 
 export const removeInstructionLink = (

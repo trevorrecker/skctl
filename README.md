@@ -66,7 +66,7 @@ Root resolution uses this order:
 
 ```text
 skctl init [dir]
-skctl config [set root|raycast|refresh <value>]
+skctl config [set root <dir>|raycast on|off|<dir>|refresh <hours>]
 skctl create skill|command [name]
 skctl get skills|commands|remotes|tags [name] [-o wide|name|json]
 skctl get skill|command <name> -o body|raw
@@ -93,6 +93,7 @@ Global flags:
 - `-o, --output <fmt>` picks `wide` (default), `name`, `json`, `body`, or `raw`.
 - `-q, --quiet` prints conflicts and the closing summary only.
 - `--no-color` turns styling off.
+- `--no-raycast` skips the Raycast sync for one run.
 
 ## Output
 
@@ -101,16 +102,20 @@ Global flags:
 ```text
   apply  ~/dev/skills → claude, codex, opencode
 
-  instructions   4 ok
-  skills        60 ok   2 removed
-  commands      —
-  raycast        4 ok   ~/.config/skctl/raycast
+  instructions    1 ok                  4 links
+  skills         33 ok    1 created    68 links
+  commands        —
 
-  -  skills  matt-handoff  ~/.agents/skills/matt-handoff  broken link
-  -  skills  matt-handoff  ~/.claude/skills/matt-handoff  broken link
+  +  skills  bro    ~/.agents/skills, ~/.claude/skills
 
-  ✔ 2 changes · 64 in sync
+  ✔ 1 change · 34 in sync
 ```
+
+The counts name things rather than filesystem operations: one instruction linked into four
+client paths reads as `1 ok`, with `4 links` alongside. A skill written to both
+`~/.agents/skills` and `~/.claude/skills` is one row in the change log, not two. When a
+thing half succeeds, its row reports the worst outcome and points at the place that
+failed.
 
 Color turns on when stdout is a terminal. `NO_COLOR`, `FORCE_COLOR`, and `--no-color`
 override that.
@@ -287,7 +292,19 @@ The local copy has no upstream metadata.
 
 ## Raycast
 
-`skctl apply` runs `skctl raycast sync` for global roots. Configure the target with
-`--dir`, `skctl config set raycast <dir>`, or the default skctl config directory.
+`skctl apply` keeps the scripts current for global roots without reporting them, since
+Raycast is a machine-local convenience rather than part of the manifest. A script you
+edited by hand still shows up as a conflict. `skctl raycast sync` reports in full.
+
+The skill dropdown is baked into each script's header, because Raycast reads an
+argument's options from the file before the script runs. That is why the files are
+rewritten whenever the skill list changes, and why apply does it quietly.
+
+```bash
+skctl config set raycast off
+skctl config set raycast on
+skctl config set raycast ~/some/other/dir
+skctl apply --no-raycast
+```
 
 See [Raycast setup](raycast/README.md).

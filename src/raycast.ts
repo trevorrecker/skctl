@@ -61,6 +61,9 @@ const render = (spec: ScriptSpec): RaycastScript => {
   };
 };
 
+// Raycast parses an argument's dropdown data from the script header before the script
+// runs, so the skill list has to be baked in. That means these files are rewritten
+// whenever the list changes, which is why apply syncs them without reporting it.
 const skillDropdown = (skills: SkillInfo[]): string => {
   const data = skills.map((skill) => {
     const markers = [

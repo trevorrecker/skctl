@@ -409,6 +409,9 @@ const describeDispatch = (args: Args): CommandOutput => {
 const raycastTarget = (args: Args): string =>
   args.dir ?? loadConfig().raycastDir ?? defaultRaycastDir();
 
+const raycastEnabled = (args: Args): boolean =>
+  !args.noRaycast && loadConfig().raycastEnabled !== false;
+
 const scheduledRemoteRefresh = (
   paths: SkillPaths,
   dryRun: boolean,
@@ -464,13 +467,14 @@ const applyResult = (
     { name: "skills", actions: report.skills },
     { name: "commands", actions: report.commands },
   );
-  if (!opts.dryRun && !args.noRaycast && paths.scope === "global") {
-    const target = raycastTarget(args);
-    sections.push({
-      name: "raycast",
-      note: shortPath(target),
-      actions: syncRaycast(paths, target, config.activeTags),
-    });
+  // Raycast is a machine-local convenience rather than part of the manifest, so apply
+  // keeps its scripts current without adding a row to every report. Only a script
+  // someone hand-edited is worth interrupting for.
+  if (!opts.dryRun && raycastEnabled(args) && paths.scope === "global") {
+    const conflicts = syncRaycast(paths, raycastTarget(args), config.activeTags).filter(
+      (action) => action.kind === "conflict",
+    );
+    if (conflicts.length > 0) sections.push({ name: "raycast", actions: conflicts });
   }
   return {
     verb: opts.verb ?? "apply",
@@ -810,7 +814,11 @@ const configDispatch = (args: Args): CommandOutput => {
     const config = loadConfig();
     if (key === "root") config.root = resolve(value);
     else if (key === "raycast" || key === "raycastDir") {
-      config.raycastDir = resolve(value);
+      if (value === "off" || value === "on") config.raycastEnabled = value === "on";
+      else {
+        config.raycastDir = resolve(value);
+        delete config.raycastEnabled;
+      }
     } else if (value === "off") {
       delete config.remoteRefreshHours;
     } else {
@@ -822,7 +830,9 @@ const configDispatch = (args: Args): CommandOutput => {
         ? config.remoteRefreshHours === undefined
           ? "off"
           : `${config.remoteRefreshHours}h`
-        : shortPath(resolve(value));
+        : value === "off" || value === "on"
+          ? value
+          : shortPath(resolve(value));
     return notice([`set ${key === "raycastDir" ? "raycast" : key} = ${setting}`], config);
   }
   const config = loadConfig();
@@ -837,10 +847,12 @@ const configDispatch = (args: Args): CommandOutput => {
     text: renderDetails("config", shortPath(configPath()), [
       ["root", root],
       [
-        "raycast dir",
-        config.raycastDir === undefined
-          ? `${shortPath(defaultRaycastDir())} ${dim("(default)")}`
-          : shortPath(config.raycastDir),
+        "raycast",
+        `${config.raycastEnabled === false ? "off" : "on"}  ${dim(
+          config.raycastDir === undefined
+            ? `${shortPath(defaultRaycastDir())} (default)`
+            : shortPath(config.raycastDir),
+        )}`,
       ],
       ["active tags", config.activeTags ?? []],
       ["instruction targets", (config.instructionTargets ?? []).map(shortPath)],

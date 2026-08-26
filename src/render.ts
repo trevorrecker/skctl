@@ -17,6 +17,7 @@ import {
   yellow,
 } from "./ui.js";
 import type { DetailPair } from "./ui.js";
+import { dirname } from "node:path";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
 import type { DoctorEntry, DoctorReport } from "./skills/doctor.js";
 import type { RemoteInfo } from "./skills/remotes.js";
@@ -53,6 +54,7 @@ export interface ApplySectionData {
   name: string;
   note?: string;
   counts: ActionTally;
+  links: number;
   actions: Action[];
 }
 
@@ -102,45 +104,109 @@ const kindMark = {
 const plural = (count: number, word: string): string =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
-const tally = (actions: readonly Action[]): ActionTally => {
+// One skill linked into two directories is one thing that moved, not two. Actions are
+// filesystem operations, so the report groups them by the thing they act on and keeps
+// the operation count alongside.
+const kindRank: Record<ActionKind, number> = {
+  ok: 0,
+  removed: 1,
+  replaced: 2,
+  created: 3,
+  conflict: 4,
+};
+
+interface ActionGroup {
+  subject: string;
+  kind: ActionKind;
+  actions: Action[];
+}
+
+const groupActions = (actions: readonly Action[]): ActionGroup[] => {
+  const groups = new Map<string, Action[]>();
+  for (const action of actions) {
+    const key = action.subject ?? `\u0000${action.detail}`;
+    groups.set(key, [...(groups.get(key) ?? []), action]);
+  }
+  return [...groups.values()].map((members) => ({
+    subject: members[0]?.subject ?? "",
+    kind: members.reduce<ActionKind>(
+      (worst, action) => (kindRank[action.kind] > kindRank[worst] ? action.kind : worst),
+      "ok",
+    ),
+    actions: members,
+  }));
+};
+
+const leadAction = (group: ActionGroup): Action =>
+  group.actions.find((action) => action.kind === group.kind) ?? group.actions[0];
+
+// Only the operations matching the group's kind are worth naming: when a skill links
+// cleanly into one directory and collides in another, the row should point at the
+// collision. A single operation is clearest as its full path; several are clearest as
+// the set of directories, since the subject already names the file.
+const destination = (group: ActionGroup): string => {
+  const relevant = group.actions.filter((action) => action.kind === group.kind);
+  if (relevant.length === 1) return shorten(relevant[0].detail);
+  const dirs = [
+    ...new Set(
+      relevant.map((action) =>
+        action.detail.startsWith("/") ? dirname(action.detail) : action.detail,
+      ),
+    ),
+  ];
+  return shorten(dirs.join(", "));
+};
+
+const tally = (groups: readonly ActionGroup[]): ActionTally => {
   const counts: ActionTally = {};
-  for (const action of actions) counts[action.kind] = (counts[action.kind] ?? 0) + 1;
+  for (const group of groups) counts[group.kind] = (counts[group.kind] ?? 0) + 1;
   return counts;
 };
 
 const changesOf = (
   result: ApplyResult,
-): Array<{ section: ReportSection; action: Action }> =>
+): Array<{ section: ReportSection; group: ActionGroup }> =>
   result.sections.flatMap((section) =>
-    section.actions
-      .filter((action) => action.kind !== "ok")
-      .map((action) => ({ section, action })),
+    groupActions(section.actions)
+      .filter((group) => group.kind !== "ok")
+      .map((group) => ({ section, group })),
+  );
+
+const syncedCount = (result: ApplyResult): number =>
+  result.sections.reduce(
+    (total, section) =>
+      total + groupActions(section.actions).filter((group) => group.kind === "ok").length,
+    0,
   );
 
 export const conflictCount = (result: ApplyResult): number =>
   result.sections.reduce(
     (total, section) =>
-      total + section.actions.filter((action) => action.kind === "conflict").length,
+      total + groupActions(section.actions).filter((group) => group.kind === "conflict").length,
     0,
   );
 
 const countsTable = (sections: readonly ReportSection[]): string[] => {
-  const tallies = sections.map((section) => tally(section.actions));
+  const grouped = sections.map((section) => groupActions(section.actions));
+  const tallies = grouped.map(tally);
   const digits = Math.max(
     1,
     ...tallies.flatMap((counts) => Object.values(counts).map((count) => String(count).length)),
   );
   const rows = sections.map((section, index) => {
     const counts = tallies[index] ?? {};
+    const groups = grouped[index] ?? [];
     const cells = kindOrder
       .filter((kind) => (counts[kind] ?? 0) > 0)
       .map((kind) => {
         const number = padStart(String(counts[kind]), digits);
         return kind === "ok" ? `${number} ${dim(kind)}` : kindColor[kind](`${number} ${kind}`);
       });
+    const links = section.actions.length;
     return [
       section.name,
       ...(cells.length > 0 ? cells : [dim(Marks.none)]),
+      links === groups.length ? "" : dim(`${links} links`),
       section.note === undefined ? "" : dim(section.note),
     ];
   });
@@ -148,30 +214,30 @@ const countsTable = (sections: readonly ReportSection[]): string[] => {
 };
 
 const changeLines = (
-  changes: ReadonlyArray<{ section: ReportSection; action: Action }>,
+  changes: ReadonlyArray<{ section: ReportSection; group: ActionGroup }>,
 ): string[] => {
-  const rows = changes.map(({ section, action }) => [
-    kindColor[action.kind](kindMark[action.kind]),
-    dim(section.name),
-    action.subject ?? "",
-    shorten(action.detail),
-    action.note === undefined ? "" : dim(shorten(action.note)),
-  ]);
+  const rows = changes.map(({ section, group }) => {
+    const note = leadAction(group).note;
+    return [
+      kindColor[group.kind](kindMark[group.kind]),
+      dim(section.name),
+      group.subject,
+      destination(group),
+      note === undefined ? "" : dim(shorten(note)),
+    ];
+  });
   return columns(dropEmptyColumns(rows));
 };
 
 const applyFooter = (result: ApplyResult): string => {
   const changes = changesOf(result);
-  const conflicts = changes.filter((change) => change.action.kind === "conflict").length;
+  const conflicts = changes.filter((change) => change.group.kind === "conflict").length;
   const changed = changes.length - conflicts;
-  const synced = result.sections.reduce(
-    (total, section) => total + section.actions.filter((action) => action.kind === "ok").length,
-    0,
-  );
+  const synced = syncedCount(result);
   const pending = result.dryRun ? " pending" : "";
   const parts = [
     ...(conflicts > 0 ? [red(plural(conflicts, "conflict"))] : []),
-    changed === 0 ? `nothing to do${pending}` : `${plural(changed, "change")}${pending}`,
+    changed === 0 ? "nothing to do" : `${plural(changed, "change")}${pending}`,
     dim(`${synced} in sync`),
   ];
   return `${conflicts > 0 ? red(Marks.fail) : green(Marks.ok)} ${joinDots(parts)}`;
@@ -181,7 +247,7 @@ export const renderApply = (result: ApplyResult, options: RenderOptions = {}): s
   const changes = changesOf(result);
   const footer = [applyFooter(result)];
   if (options.quiet === true) {
-    const conflicts = changes.filter((change) => change.action.kind === "conflict");
+    const conflicts = changes.filter((change) => change.group.kind === "conflict");
     return report(changeLines(conflicts), footer);
   }
   const heading = title(
@@ -213,15 +279,12 @@ export const applyData = (
     sections: result.sections.map((section) => ({
       name: section.name,
       note: section.note,
-      counts: tally(section.actions),
+      counts: tally(groupActions(section.actions)),
+      links: section.actions.length,
       actions: section.actions,
     })),
     summary: {
-      inSync: result.sections.reduce(
-        (total, section) =>
-          total + section.actions.filter((action) => action.kind === "ok").length,
-        0,
-      ),
+      inSync: syncedCount(result),
       changed: changes.length - conflicts,
       conflicts,
     },
@@ -459,10 +522,10 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["enable|disable skill|command|tag <name>", "toggle an entry, then apply"],
       ["tag|untag skill <name> <tag...>", "edit a skill's shared tags"],
       ["instruction list|add|remove [path]", "manage machine-local instruction targets"],
-      ["config [set root|raycast|refresh <value>]", "show or update configuration"],
+      ["config [set root|raycast|refresh <value>]", "show or update configuration; raycast takes on, off, or a directory"],
       ["refresh", "update root, remotes, and client targets"],
       ["schedule install [hours]|status|remove", "manage the background refresh job"],
-      ["raycast sync [--dir <path>]", "regenerate Raycast script commands"],
+      ["raycast sync [--dir <path>]", "regenerate the Raycast script commands and report"],
     ],
   ],
 ];
@@ -494,7 +557,7 @@ export const renderUsage = (): string =>
       ["--dry-run", "plan without writing, on apply, import, and detach"],
       ["-q, --quiet", "print conflicts and the summary only"],
       ["--no-color", "disable color; NO_COLOR and FORCE_COLOR are honored"],
-      ["--no-raycast", "skip the Raycast sync during apply"],
+      ["--no-raycast", "skip the Raycast sync for this run"],
       ["--skills <a,b>", "narrow what `remote add` selects"],
     ]),
     flagGroup("CREATE FLAGS", [
