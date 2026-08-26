@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { isAbsolute, relative, sep } from "node:path";
 
 const ansiPattern = /\u001B\[[0-9;]*m/g;
 
@@ -35,11 +36,14 @@ export const Marks = {
   arrow: "→",
   on: "●",
   off: "○",
+  partial: "◐",
   none: "—",
+  foldOpen: "▾",
+  foldClosed: "▸",
   added: "+",
   changed: "~",
   removed: "-",
-} as const;
+};
 
 export const width = (text: string): number => text.replace(ansiPattern, "").length;
 
@@ -54,8 +58,10 @@ const shortenable = home.length > 1;
 
 export const shortPath = (path: string): string => {
   if (!shortenable) return path;
-  if (path === home) return "~";
-  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  const fromHome = relative(home, path);
+  if (fromHome === "") return "~";
+  if (fromHome === ".." || fromHome.startsWith(`..${sep}`) || isAbsolute(fromHome)) return path;
+  return `~/${fromHome.split(sep).join("/")}`;
 };
 
 export const shorten = (text: string): string =>
@@ -110,10 +116,7 @@ export type DetailPair = readonly [string, string | readonly string[]];
 
 export const keyValues = (pairs: readonly DetailPair[]): string[] => {
   const rows = pairs.flatMap(([key, value]) => {
-    // SAFETY: the parameter type is `string | readonly string[]` and Array.isArray just
-    // ruled out the array arm. TypeScript cannot narrow a readonly array with
-    // Array.isArray, so the remaining value is a string even though it does not know it.
-    const values = Array.isArray(value) ? value : [value as string];
+    const values = typeof value === "string" ? [value] : value;
     if (values.length === 0) return [[dim(key), dim(Marks.none)]];
     return values.map((entry, index) => [index === 0 ? dim(key) : "", entry]);
   });

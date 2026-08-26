@@ -6,6 +6,7 @@
 |---|---|
 | User instructions | `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/AGENTS.md` |
 | Skills | `~/.agents/skills/<name>` |
+| Skills, OpenCode only | `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/skills/<name>` |
 | Commands | `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/commands/<name>.md` |
 
 `OPENCODE_CONFIG_DIR` selects the OpenCode directory used by skctl for instructions
@@ -30,9 +31,30 @@ fallback.
 
 ## Skills and commands
 
-OpenCode discovers global skills from `~/.agents/skills`, along with its native and
-Claude-compatible skill directories. Skctl uses the shared agent path so one skill
-link serves Codex and OpenCode.
+OpenCode discovers global skills from three directories:
+
+1. `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/skills`
+2. `~/.claude/skills`
+3. `~/.agents/skills`
+
+It reads all three, which makes OpenCode the client least able to receive content the
+others do not see. skctl normally covers it through the shared `agents` surface. Its native
+directory carries an OpenCode-only variant when a skill asks for one, and because OpenCode
+still reads the other two, `skctl apply` reports the overlap rather than assuming a
+precedence rule that OpenCode does not document.
+
+## Frontmatter
+
+The `opencode` surface keeps what OpenCode recognizes:
+
+```text
+name  description  license  compatibility  metadata
+```
+
+OpenCode ignores frontmatter it does not know, so this list keeps the file tidy rather than
+avoiding an error.
+
+See [surfaces and overlays](../surfaces.md).
 
 Command sources compile into OpenCode Markdown command files. Host guards and
 frontmatter mapping run before skctl writes the file.

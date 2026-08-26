@@ -1,4 +1,5 @@
 import { parse, stringify } from "yaml";
+import { isRecord } from "../record.js";
 
 export interface ParsedFrontmatter {
   data: Record<string, unknown>;
@@ -6,9 +7,6 @@ export interface ParsedFrontmatter {
 }
 
 const fence = "---";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const parseFrontmatter = (source: string): ParsedFrontmatter => {
   const text = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;

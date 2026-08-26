@@ -4,44 +4,51 @@
 [![npm](https://img.shields.io/npm/v/@trevorrecker/skctl)](https://www.npmjs.com/package/@trevorrecker/skctl)
 
 `skctl` manages agent skills, commands, and shared instructions across Claude Code,
-Codex, and OpenCode. Content lives in a skills root that can be checked into Git and
-used on more than one computer.
+Codex, OpenCode, and Cursor. It keeps one source root, compiles each skill for the
+clients that will read it, and reconciles their user or project directories.
+
+## Requirements and platform support
+
+- Node.js 22.11 or newer on a supported even-numbered release line.
+- Git for remote repositories and `skctl refresh`.
+
+| Platform | Support |
+|---|---|
+| macOS | Primary platform. Full CLI, Raycast, and launchd scheduling. |
+| Linux | Core CLI and link workflow. Use your own scheduler for `skctl refresh`. |
+| Windows | Experimental. Enable Developer Mode or provide symlink privileges. Raycast and launchd are unavailable. |
+
+The CI workflow targets macOS, Linux, and Windows for the parser, compiler, tests,
+and package scripts. Native Windows still needs symlink permission for apply, project links,
+instructions, and skills that bundle files. WSL works when the agent harness and
+skctl both use the same Linux home and config paths.
 
 ## Install
-
-Run from npm:
-
-```bash
-npx @trevorrecker/skctl init ~/dev/skills
-```
 
 Install the command globally:
 
 ```bash
-npm install -g @trevorrecker/skctl
+npm install --global @trevorrecker/skctl
 ```
 
-Run from GitHub:
+Or run a one-off command with `npx`:
 
 ```bash
-npx --allow-git=all github:trevorrecker/skctl status
+npx @trevorrecker/skctl --help
 ```
 
-Work from a clone:
+## Quick start
 
 ```bash
-git clone https://github.com/trevorrecker/skctl ~/dev/skctl
-cd ~/dev/skctl
-npm install
-ln -sf ~/dev/skctl/dist/cli.js ~/.local/bin/skctl
+skctl init ~/agent-skills
+skctl create skill code-review -d "Review a code change"
+skctl apply
+skctl status
 ```
 
-## Skills root
-
-```bash
-skctl init ~/dev/skills
-skctl config
-```
+`init` creates the root and records it in the machine-local skctl config. `apply`
+compiles enabled content and updates the client paths. `status` checks drift without
+writing.
 
 The root can contain:
 
@@ -49,228 +56,164 @@ The root can contain:
 commands/
 instructions/
   AGENTS.md
+overlays/
 remotes/
 skills/
 skills.config.json
+.build/             generated and ignored by Git
 ```
 
-Root resolution uses this order:
+Root resolution follows `--root`, then `SKCTL_ROOT`, then the root in
+`${XDG_CONFIG_HOME:-~/.config}/skctl/config.json`.
 
-1. `--root <dir>`
-2. `SKCTL_ROOT`
-3. `~/.config/skctl/config.json`
+## Bring in existing skills
 
-`XDG_CONFIG_HOME` changes the config directory.
-
-## Commands
-
-```text
-skctl init [dir]
-skctl config [set root <dir>|raycast on|off|<dir>|refresh <hours>]
-skctl create skill|command [name]
-skctl get skills|commands|remotes|tags [name] [-o wide|name|json]
-skctl get skill|command <name> -o body|raw
-skctl describe skill|command|remote|tag <name>
-skctl apply [--dry-run] [--no-raycast]
-skctl remote add <url> [alias] [--skills a,b] | remove <alias> | list
-skctl pull [remote]
-skctl detach skill <name> [--dry-run]
-skctl tag|untag skill <name> <tag...>
-skctl enable skill|command|tag <name>
-skctl disable skill|command|tag <name>
-skctl import [skills|instructions] [--dry-run]
-skctl instruction list|add|remove [path]
-skctl refresh
-skctl schedule install [hours]|status|remove
-skctl status
-skctl raycast sync [--dir <path>]
-```
-
-Global flags:
-
-- `--root <dir>` selects a skills root for one invocation.
-- `--project[=DIR]` uses `<DIR>/.agents` as the source.
-- `-o, --output <fmt>` picks `wide` (default), `name`, `json`, `body`, or `raw`.
-- `-q, --quiet` prints conflicts and the closing summary only.
-- `--no-color` turns styling off.
-- `--no-raycast` skips the Raycast sync for one run.
-
-## Output
-
-`skctl apply` reports a count per section, a log of what moved, and a summary:
-
-```text
-  apply  ~/dev/skills → claude, codex, opencode
-
-  instructions    1 ok                  4 links
-  skills         33 ok    1 created    68 links
-  commands        —
-
-  +  skills  bro    ~/.agents/skills, ~/.claude/skills
-
-  ✔ 1 change · 34 in sync
-```
-
-The counts name things rather than filesystem operations: one instruction linked into four
-client paths reads as `1 ok`, with `4 links` alongside. A skill written to both
-`~/.agents/skills` and `~/.claude/skills` is one row in the change log, not two. When a
-thing half succeeds, its row reports the worst outcome and points at the place that
-failed.
-
-Color turns on when stdout is a terminal. `NO_COLOR`, `FORCE_COLOR`, and `--no-color`
-override that.
-
-`-o json` prints the same report as structured data, which suits scripts:
-
-```bash
-skctl apply -o json | jq '.summary'
-skctl status -o json | jq '.issues'
-```
-
-A command that reports a conflict exits with status 1, and `skctl status` exits 1
-when it finds issues. Everything else exits 0.
-
-## Create
-
-```bash
-skctl create skill my-skill -d "when to use this skill"
-skctl create command greet -d "greets someone" --argument-hint "<name>" --apply
-skctl create skill work-tool --tags work --hosts claude,codex
-cat draft.md | skctl create skill my-skill --body -
-```
-
-Create flags:
-
-- `-d/--description <text>`
-- `--body <text|->`
-- `--hosts <host,...>`
-- `--tags <tag,...>` for skills
-- `--argument-hint <text>` for commands
-- `--no-paste` for skills
-- `--apply`
-- `--force`
-
-`create skill` writes `paste: true` by default. `--no-paste` omits the field.
-
-## Import
-
-Import adopts skills that already sit loose on this computer. To install skills from
-a Git repository, use [`skctl remote add`](#remotes) instead.
-
-`skctl import` and `skctl import skills` have the same behavior. They adopt loose
-skill directories from `~/.agents/skills`, place them under the skills root, and
-leave host links in their place.
+Adopt loose skill directories already under `~/.agents/skills`:
 
 ```bash
 skctl import --dry-run
 skctl import
-skctl import instructions
 ```
 
-Instruction import accepts `~/AGENTS.md` and `~/CLAUDE.md` as home inputs. When
-both exist, their content must match. The tracked source lives at
-`instructions/AGENTS.md`, and the home hierarchy paths stay absent after import.
-
-`skctl apply` links the tracked source to the Claude Code, Codex, and OpenCode user
-instruction paths. OpenCode also reads the default Claude Code path as a fallback.
-`skctl status` reports home hierarchy files that can load beside the managed user
-instructions.
-
-Extra client homes are machine-local targets:
+Install skills from any Git repository that contains directories with a `SKILL.md`:
 
 ```bash
-skctl instruction add ~/.codex-work/AGENTS.md
-skctl instruction list
-skctl instruction remove ~/.codex-work/AGENTS.md
+skctl remote add https://github.com/owner/skills example
+skctl remote add https://github.com/mattpocock/skills pocock --skills wayfinder
 ```
 
-The target list lives in the local skctl config. Apply reconciles each target to the
-tracked instruction source.
-
-See [client instruction paths](docs/clients/README.md) for load order and link
-behavior.
-
-## Manifest
-
-Skills and commands are enabled unless their entry says otherwise. A tagged skill is
-enabled when at least one of its tags is active on the computer.
-
-```json
-{
-  "defaultHosts": ["claude", "codex", "opencode"],
-  "remotes": {
-    "pocock": {
-      "url": "https://github.com/mattpocock/skills",
-      "skills": ["wayfinder", "grilling"]
-    }
-  },
-  "skills": {
-    "issue-tracking": { "hosts": ["claude"] },
-    "work-only": { "tags": ["work"] },
-    "grill-me": { "enabled": false }
-  },
-  "commands": {}
-}
-```
-
-Active tags live in the local skctl config:
+Nested layouts work. When a repository contains the same skill name in more than
+one plugin, use a qualified selector. Poteto's pstack in the Cursor plugin catalog
+is one example:
 
 ```bash
-skctl tag skill issue-tracking work
-skctl enable tag work
-skctl disable tag personal
-skctl get tags
+skctl remote add https://github.com/cursor/plugins plugins --skills pstack/unslop,pstack/bro
 ```
 
-Untagged skills form the common layer. A tagged skill is active when any of its tags
-is active on the machine. Tag assignments stay in the shared manifest; active tags
-stay in local config.
-
-## Remotes
-
-Remote repositories are Git clones under `remotes/<alias>/`. Each remote manifest
-entry selects the skills that skctl exposes to clients.
-
-Add one by URL. skctl derives the alias from the URL, clones, finds every `SKILL.md`
-in the repository, selects all of them, and applies:
+Use the terminal picker when you would rather inspect the catalog first:
 
 ```bash
-skctl remote add https://github.com/dmmulroy/anti-slop
-skctl remote add https://github.com/mattpocock/skills --skills wayfinder,grilling
-skctl remote add https://github.com/owner/repo my-alias
+skctl browse plugins
+skctl browse https://github.com/owner/skills
 ```
 
-Any layout works as long as each skill is a directory holding a `SKILL.md`. Nesting
-is fine: `skills/<name>/SKILL.md` and `packages/skills/<name>/SKILL.md` both resolve.
-skctl links the whole skill directory, so a skill that ships its own `scripts/` or
-`assets/` keeps them reachable at the path clients see.
+Arrow keys or `j`/`k` move, space toggles a skill or plugin, `p` previews a
+`SKILL.md`, `/` filters, enter reviews and commits, and `q` leaves without writing.
+Without a terminal, browse prints the catalog and exits without changing it.
 
-Narrow the selection after the fact with the usual toggle, and see what a remote
-offers but you have not taken:
-
-```bash
-skctl disable skill install-anti-slop
-skctl get remotes
-skctl describe remote pocock
-```
-
-Update tracked remotes, or drop one along with its clone and selections:
+Remote clones live under `remotes/<alias>`. `pull` fast-forwards them and applies
+the result. `detach` copies one selected remote skill into local source and removes
+its remote selection.
 
 ```bash
 skctl pull
 skctl pull pocock
+skctl detach skill wayfinder
 skctl remote remove pocock
-skctl refresh
 ```
 
-`skctl pull` takes an alias. Handing it a URL it does not track prints the
-`skctl remote add` command to run instead.
+## Choose what is active
 
-`skctl refresh` fast-forwards a clean skills root, updates each remote, and applies
-the machine's active tags and instruction targets. A dirty root stays untouched and
-appears as a conflict in the report.
+Skills and commands start enabled. Direct toggles live in the shared manifest and
+apply immediately:
 
-On macOS, install the launchd job with an interval in hours:
+```bash
+skctl disable skill code-review
+skctl enable skill code-review
+```
+
+Tags provide a machine-local activation layer. Membership lives in the shared
+manifest; the active tag list lives in local config:
+
+```bash
+skctl tag skill work-tool work
+skctl enable tag work
+skctl disable tag work
+skctl get tags
+```
+
+`tag` and `untag` only edit membership. `enable tag` and `disable tag` apply the new
+machine-local selection. Untagged skills form the common layer.
+
+## How apply works
+
+Clients accept different frontmatter and read overlapping skill directories. skctl
+therefore writes one compiled copy per selected output surface, then links the
+client-visible path to that build:
+
+```text
+~/.claude/skills/code-review  ->  <root>/.build/claude/code-review
+~/.agents/skills/code-review  ->  <root>/.build/agents/code-review
+```
+
+The compiler:
+
+1. Applies a local overlay when one exists.
+2. Resolves host guards.
+3. Keeps only frontmatter the output surface accepts.
+4. Pins `name` to the skill directory.
+5. Links bundled files such as `scripts/` and `assets/` back to source.
+
+`skctl describe skill <name>` shows declared hosts, output surfaces, and extra
+readers caused by client compatibility paths. A guard or surface overlay can
+change content only inside the skill's declared host reach.
+
+```markdown
+<!-- host:claude -->
+Read @notes.md before starting.
+<!-- /host -->
+<!-- host:!claude -->
+Read notes.md before starting.
+<!-- /host -->
+```
+
+`host:raycast` selects the body copied by the Raycast paste command. See
+[surfaces and overlays](docs/surfaces.md) for the reader matrix, supported
+frontmatter, overlay format, and conflict rules.
+
+## Shared instructions
+
+Track one instruction source at `instructions/AGENTS.md`:
+
+```bash
+skctl import instructions
+skctl instruction list
+skctl instruction add ~/.codex-work/AGENTS.md
+skctl instruction remove ~/.codex-work/AGENTS.md
+```
+
+Import can adopt matching `~/AGENTS.md` or `~/CLAUDE.md` content. Apply links the
+tracked source into the configured user instruction paths and any additional
+machine-local targets. See [client paths](docs/clients/README.md) for each harness.
+
+## Project a subset
+
+Project mode selects part of the global root for one repository:
+
+```bash
+skctl project init --tags work
+skctl project init --skills code-review,unslop --copy
+skctl project
+skctl project status
+skctl project remove
+```
+
+`--link` writes a local build and symlinks. `--copy` writes real skill directories
+that a repository can carry. Both modes refuse to replace paths skctl does not own.
+Project selectors respect an explicit global disable. Their `--tags` selector is
+independent of the machine's active global tags.
+
+skctl ignores only its generated `.agents/.build/` and
+`.agents/skctl.project.json` state in the project root. It does not hide copied or
+hand-written skills. The `--project[=DIR]` global flag does a different job: it uses
+`<DIR>/.agents` as the source root.
+
+## Refresh, scheduling, and Raycast
+
+`skctl refresh` fast-forwards a clean root, updates remotes, and applies. It leaves
+a dirty root untouched and reports a conflict.
+
+On macOS, skctl can install a launchd job:
 
 ```bash
 skctl schedule install 24h
@@ -278,33 +221,69 @@ skctl schedule status
 skctl schedule remove
 ```
 
-See [scheduled refresh](docs/scheduling.md) for job behavior and other operating
-systems.
+Other platforms can schedule `skctl refresh --quiet --no-color` with their native
+scheduler. See [scheduled refresh](docs/scheduling.md).
 
-Detach copies the files in the remote clone into local source and clears that skill
-from the remote selection:
-
-```bash
-skctl detach skill wayfinder
-```
-
-The local copy has no upstream metadata.
-
-## Raycast
-
-`skctl apply` keeps the scripts current for global roots without reporting them, since
-Raycast is a machine-local convenience rather than part of the manifest. A script you
-edited by hand still shows up as a conflict. `skctl raycast sync` reports in full.
-
-The skill dropdown is baked into each script's header, because Raycast reads an
-argument's options from the file before the script runs. That is why the files are
-rewritten whenever the skill list changes, and why apply does it quietly.
+Raycast script generation defaults on only for macOS global roots:
 
 ```bash
 skctl config set raycast off
 skctl config set raycast on
-skctl config set raycast ~/some/other/dir
+skctl config set raycast ~/path/to/script-commands
 skctl apply --no-raycast
 ```
 
 See [Raycast setup](raycast/README.md).
+
+## Output and automation
+
+Color follows the terminal and honors `NO_COLOR`, `FORCE_COLOR`, and `--no-color`.
+Conflicts and status issues exit with status 1. Invalid input and runtime failures
+also exit with status 1.
+
+Use JSON for automation:
+
+```bash
+skctl apply --output json | jq '.summary'
+skctl status --output json | jq '.issues'
+```
+
+`--dry-run` plans supported write operations without changing files. `--quiet`
+prints only conflicts and the final summary.
+
+## Command reference
+
+```text
+skctl init [dir]
+skctl config [set root|raycast|refresh <value>]
+skctl create skill|command [name]
+skctl import [skills|instructions]
+skctl get skills|commands|remotes|tags [name]
+skctl describe skill|command|remote|tag <name>
+skctl apply
+skctl enable|disable skill|command|tag <name>
+skctl tag|untag skill <name> <tag...>
+skctl remote add <url> [alias] | remove <alias> | list
+skctl browse [alias|url]
+skctl pull [remote]
+skctl detach skill <name>
+skctl instruction list|add|remove [path]
+skctl project [apply]|init|status|remove
+skctl refresh
+skctl schedule install [hours]|status|remove
+skctl raycast sync [--dir <path>]
+skctl status
+```
+
+Run `skctl --help` for flags and current usage.
+
+## Development
+
+```bash
+npm install
+npm test
+npm pack --dry-run
+```
+
+`npm test` builds first and runs the Node test suite against the compiled package.
+CI covers Node 22.11, 24, and 26 on Linux and Node 22.11 on macOS and Windows.

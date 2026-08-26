@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ensureSymlink, isSymlink, moveDir } from "./fsx.js";
+import { lockedSkillNames } from "./skill-lock.js";
 import type { Action } from "./types.js";
 import type { SkillPaths } from "./paths.js";
 
@@ -15,32 +16,18 @@ const isImportable = (dir: string): boolean => {
   return existsSync(skillFile) && !isSymlink(skillFile);
 };
 
-const externallyManaged = (skillLockPath: string): Set<string> => {
-  if (!existsSync(skillLockPath)) return new Set();
-  try {
-    // SAFETY: only `skills` is read, and it is defaulted before use. Any other shape,
-    // including a non-object, throws into the catch below and yields an empty set.
-    const parsed = JSON.parse(readFileSync(skillLockPath, "utf-8")) as {
-      skills?: Record<string, unknown>;
-    };
-    return new Set(Object.keys(parsed.skills ?? {}));
-  } catch {
-    return new Set();
-  }
-};
-
 export const importLooseSkills = (
   paths: SkillPaths,
   dryRun: boolean,
 ): ImportReport => {
   const report: ImportReport = { dryRun, imported: [], skipped: [] };
-  if (!existsSync(paths.agentsSkills)) return report;
+  if (!existsSync(paths.surfaceDirs.agents)) return report;
 
-  const vendored = externallyManaged(paths.skillLockPath);
+  const vendored = lockedSkillNames(paths.skillLockPath);
 
-  for (const entry of readdirSync(paths.agentsSkills, { withFileTypes: true })) {
+  for (const entry of readdirSync(paths.surfaceDirs.agents, { withFileTypes: true })) {
     const name = entry.name;
-    const agentsPath = join(paths.agentsSkills, name);
+    const agentsPath = join(paths.surfaceDirs.agents, name);
     if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
     if (vendored.has(name)) {
       report.skipped.push({

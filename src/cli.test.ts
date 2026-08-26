@@ -12,9 +12,50 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRecord } from "./record.js";
 import { loadManifest, saveManifest } from "./skills/manifest.js";
+import { resolveProjectTarget } from "./skills/paths.js";
+import { loadProjectConfig } from "./skills/project.js";
 
 const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
+
+test("CLI help and version flags never enter command handlers", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
+  const home = join(scratch, "home");
+  mkdirSync(home, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(scratch, "config"),
+    NO_COLOR: undefined,
+    FORCE_COLOR: undefined,
+  };
+  const run = (...args: string[]) =>
+    spawnSync(process.execPath, [cli, ...args], { encoding: "utf-8", env });
+
+  const version = run("--version");
+  assert.equal(version.status, 0);
+  assert.match(version.stdout, /^\d+\.\d+\.\d+\s*$/);
+
+  const help = run("init", "--help");
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /skctl\s+portable agent skills/);
+  assert.equal(existsSync(join(process.cwd(), "--help")), false);
+
+  const unknown = run("status", "--unknown");
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /unknown option: --unknown/);
+
+  const missing = run("create", "skill", "demo", "--description");
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /--description requires a value/);
+
+  assert.equal(run("init", join(scratch, "skills-root")).status, 0);
+  const unknownSkill = run("disable", "skill", "missing", "--no-raycast");
+  assert.equal(unknownSkill.status, 1);
+  assert.match(unknownSkill.stderr, /unknown skill: missing/);
+});
 
 test("CLI manages instruction aliases and machine-local skill tags", () => {
   const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
@@ -28,10 +69,12 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
   const env = {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
     XDG_CONFIG_HOME: configHome,
     CLAUDE_CONFIG_DIR: claudeConfig,
     CODEX_HOME: codexHome,
     OPENCODE_CONFIG_DIR: opencodeConfig,
+    CURSOR_CONFIG_DIR: join(scratch, "cursor-config"),
   };
   const run = (...args: string[]): string =>
     execFileSync(process.execPath, [cli, ...args], { encoding: "utf-8", env });
@@ -69,11 +112,12 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
   const extraInstructions = join(home, "client-home", "AGENTS.md");
   run("instruction", "add", extraInstructions, "--no-raycast");
   assert.ok(lstatSync(extraInstructions).isSymbolicLink());
-  const listed = JSON.parse(run("instruction", "list", "-o", "json")) as {
-    targets: Array<{ target: string; origin: string }>;
-  };
+  const listed: unknown = JSON.parse(run("instruction", "list", "-o", "json"));
+  assert.ok(isRecord(listed));
+  assert.ok(Array.isArray(listed.targets));
+  const targets = listed.targets.filter(isRecord);
   assert.ok(
-    listed.targets.some(
+    targets.some(
       entry => entry.target === extraInstructions && entry.origin === "local",
     ),
   );
@@ -117,15 +161,23 @@ test("CLI reports conflicts through the exit code, quiet mode, and JSON", () => 
   const env = {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
     XDG_CONFIG_HOME: join(scratch, "config"),
     CLAUDE_CONFIG_DIR: join(home, "claude"),
     CODEX_HOME: join(home, "codex"),
     OPENCODE_CONFIG_DIR: join(home, "opencode"),
+    CURSOR_CONFIG_DIR: join(home, "cursor"),
     FORCE_COLOR: "1",
+    NO_COLOR: undefined,
   };
-  const run = (...args: string[]): { output: string; status: number } => {
+  const run = (...args: string[]): { output: string; stdout: string; stderr: string; status: number } => {
     const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf-8", env });
-    return { output: `${result.stdout}${result.stderr}`, status: result.status ?? 0 };
+    return {
+      output: `${result.stdout}${result.stderr}`,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      status: result.status ?? 0,
+    };
   };
 
   run("init", root);
@@ -147,17 +199,21 @@ test("CLI reports conflicts through the exit code, quiet mode, and JSON", () => 
   const json = run("apply", "--no-raycast", "-o", "json");
   assert.equal(json.status, 1);
   assert.doesNotMatch(json.output, /\u001B\[/);
-  const payload = JSON.parse(json.output) as {
-    command: string;
-    summary: { conflicts: number };
-    sections: Array<{ name: string; actions: Array<{ kind: string; note?: string }> }>;
-  };
+  const payload: unknown = JSON.parse(json.stdout);
+  assert.ok(isRecord(payload));
+  assert.ok(Array.isArray(payload.hosts));
+  assert.ok(isRecord(payload.summary));
+  assert.ok(Array.isArray(payload.sections));
+  const sections = payload.sections.filter(isRecord);
   assert.equal(payload.command, "apply");
+  assert.ok(payload.hosts.includes("cursor"));
   assert.equal(payload.summary.conflicts, 1);
   assert.ok(
-    payload.sections
-      .find(section => section.name === "commands")
-      ?.actions.some(action => action.kind === "conflict"),
+    sections.some(section =>
+      section.name === "commands" &&
+      Array.isArray(section.actions) &&
+      section.actions.filter(isRecord).some(action => action.kind === "conflict")
+    ),
   );
 
   assert.match(run("status").output, /\u001B\[/);
@@ -169,23 +225,25 @@ test("CLI adds a remote from a url, then drops it again", () => {
   const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
   const home = join(scratch, "home");
   const root = join(scratch, "skills-root");
-  const upstream = join(scratch, "anti-slop");
-  mkdirSync(join(upstream, "skills", "install-anti-slop", "scripts"), { recursive: true });
+  const upstream = join(scratch, "example-tools");
+  mkdirSync(join(upstream, "skills", "install-helper", "scripts"), { recursive: true });
   writeFileSync(
-    join(upstream, "skills", "install-anti-slop", "SKILL.md"),
-    "---\nname: install-anti-slop\ndescription: install the plugin\n---\n\nbody\n",
+    join(upstream, "skills", "install-helper", "SKILL.md"),
+    "---\nname: install-helper\ndescription: install the plugin\n---\n\nbody\n",
   );
-  writeFileSync(join(upstream, "skills", "install-anti-slop", "scripts", "install.mjs"), "//\n");
+  writeFileSync(join(upstream, "skills", "install-helper", "scripts", "install.mjs"), "//\n");
   mkdirSync(join(upstream, "skills", "spare"), { recursive: true });
   writeFileSync(join(upstream, "skills", "spare", "SKILL.md"), "---\nname: spare\n---\n\nbody\n");
   mkdirSync(home, { recursive: true });
   const env = {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
     XDG_CONFIG_HOME: join(scratch, "config"),
     CLAUDE_CONFIG_DIR: join(home, "claude"),
     CODEX_HOME: join(home, "codex"),
     OPENCODE_CONFIG_DIR: join(home, "opencode"),
+    CURSOR_CONFIG_DIR: join(home, "cursor"),
     GIT_AUTHOR_NAME: "t",
     GIT_AUTHOR_EMAIL: "t@t",
     GIT_COMMITTER_NAME: "t",
@@ -206,40 +264,44 @@ test("CLI adds a remote from a url, then drops it again", () => {
   assert.match(stray.output, /no remote tracks/);
   assert.match(stray.output, /skctl remote add/);
 
-  const added = run("remote", "add", upstream, "--skills", "install-anti-slop", "--no-raycast");
+  const added = run("remote", "add", upstream, "--skills", "install-helper", "--no-raycast");
   assert.equal(added.status, 0);
-  assert.match(added.output, /added remote 'anti-slop' with 1 skill/);
+  assert.match(added.output, /added remote 'example-tools' with 1 skill/);
   assert.match(added.output, /not selected: spare/);
 
   // A skill's bundled installer has to stay reachable through the link chain.
   assert.ok(
-    existsSync(join(home, "claude", "skills", "install-anti-slop", "scripts", "install.mjs")),
+    existsSync(join(home, "claude", "skills", "install-helper", "scripts", "install.mjs")),
   );
   assert.equal(existsSync(join(home, ".agents", "skills", "spare")), false);
 
-  const listed = JSON.parse(run("get", "remotes", "-o", "json").output) as Array<{
-    alias: string;
-    skills: string[];
-    available: string[];
-  }>;
-  assert.deepEqual(listed[0]?.skills, ["install-anti-slop"]);
-  assert.deepEqual(listed[0]?.available, ["install-anti-slop", "spare"]);
+  const listedPayload: unknown = JSON.parse(run("get", "remotes", "-o", "json").output);
+  assert.ok(Array.isArray(listedPayload));
+  const listed = listedPayload.filter(isRecord);
+  assert.deepEqual(listed[0]?.skills, ["install-helper"]);
+  assert.deepEqual(listed[0]?.available, ["install-helper", "spare"]);
 
   // Pulling by url has to resolve back to the alias that already tracks it.
   const pulled = run("pull", upstream, "--no-raycast", "-o", "json");
   assert.equal(pulled.status, 0);
-  const pullPayload = JSON.parse(pulled.output) as {
-    sections: Array<{ name: string; actions: Array<{ subject?: string; detail: string }> }>;
-  };
-  const remoteAction = pullPayload.sections.find(section => section.name === "remotes")?.actions[0];
-  assert.equal(remoteAction?.subject, "anti-slop");
-  assert.match(remoteAction?.detail ?? "", /up to date/);
+  const pullPayload: unknown = JSON.parse(pulled.output);
+  assert.ok(isRecord(pullPayload));
+  assert.ok(Array.isArray(pullPayload.sections));
+  const remoteSection = pullPayload.sections
+    .filter(isRecord)
+    .find(section => section.name === "remotes");
+  assert.ok(Array.isArray(remoteSection?.actions));
+  const remoteAction = remoteSection.actions.filter(isRecord)[0];
+  assert.equal(remoteAction?.subject, "example-tools");
+  const remoteDetail = remoteAction?.detail;
+  assert.ok(typeof remoteDetail === "string");
+  assert.match(remoteDetail, /up to date/);
   assert.equal(run("status").status, 0);
 
-  const dropped = run("remote", "remove", "anti-slop", "--no-raycast");
+  const dropped = run("remote", "remove", "example-tools", "--no-raycast");
   assert.equal(dropped.status, 0);
-  assert.equal(existsSync(join(home, ".agents", "skills", "install-anti-slop")), false);
-  assert.equal(existsSync(join(root, "remotes", "anti-slop")), false);
+  assert.equal(existsSync(join(home, ".agents", "skills", "install-helper")), false);
+  assert.equal(existsSync(join(root, "remotes", "example-tools")), false);
   assert.equal(run("status").status, 0);
 });
 
@@ -252,10 +314,12 @@ test("apply keeps the raycast scripts current without reporting them", () => {
   const env = {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
     XDG_CONFIG_HOME: join(scratch, "config"),
     CLAUDE_CONFIG_DIR: join(home, "claude"),
     CODEX_HOME: join(home, "codex"),
     OPENCODE_CONFIG_DIR: join(home, "opencode"),
+    CURSOR_CONFIG_DIR: join(home, "cursor"),
   };
   const run = (...args: string[]): { output: string; status: number } => {
     const result = spawnSync(process.execPath, [cli, ...args, "--dir", raycast], {
@@ -266,6 +330,7 @@ test("apply keeps the raycast scripts current without reporting them", () => {
   };
 
   run("init", root);
+  run("config", "set", "raycast", "on");
   run("create", "skill", "alpha", "--no-paste");
   assert.doesNotMatch(run("apply").output, /raycast/);
 
@@ -288,4 +353,57 @@ test("apply keeps the raycast scripts current without reporting them", () => {
   run("config", "set", "raycast", "off");
   assert.doesNotMatch(run("apply").output, /raycast/);
   assert.equal(readFileSync(join(raycast, "skctl-apply.sh"), "utf-8"), "#!/bin/bash\necho mine\n");
+});
+
+test("project init preserves copy ownership and rejects an explicit mode change", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skctl-project-cli-"));
+  const home = join(scratch, "home");
+  const root = join(scratch, "skills-root");
+  const project = join(scratch, "project");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(project, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(scratch, "config"),
+    CLAUDE_CONFIG_DIR: join(home, "claude"),
+    CODEX_HOME: join(home, "codex"),
+    OPENCODE_CONFIG_DIR: join(home, "opencode"),
+    CURSOR_CONFIG_DIR: join(home, "cursor"),
+  };
+  const run = (...args: string[]): { output: string; status: number } => {
+    const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf-8", env });
+    return { output: `${result.stdout}${result.stderr}`, status: result.status ?? 0 };
+  };
+
+  assert.equal(run("init", root).status, 0);
+  assert.equal(run("create", "skill", "alpha", "--no-paste", "--no-raycast").status, 0);
+  assert.equal(
+    run("project", "init", "--skills", "alpha", "--copy", "--dir", project).status,
+    0,
+  );
+  assert.equal(
+    run("project", "init", "--skills", "alpha", "--dir", project).status,
+    0,
+  );
+
+  const target = resolveProjectTarget(project);
+  const saved = loadProjectConfig(target);
+  assert.equal(saved?.mode, "copy");
+  assert.ok((saved?.written?.length ?? 0) > 0);
+  assert.equal(lstatSync(join(target.surfaceDirs.agents, "alpha")).isSymbolicLink(), false);
+
+  const changed = run(
+    "project",
+    "init",
+    "--skills",
+    "alpha",
+    "--link",
+    "--dir",
+    project,
+  );
+  assert.equal(changed.status, 1);
+  assert.match(changed.output, /project already uses copy mode/);
+  assert.equal(loadProjectConfig(target)?.mode, "copy");
 });

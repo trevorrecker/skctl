@@ -35,17 +35,40 @@ path is `${CODEX_HOME:-~/.codex}/AGENTS.md`.
 
 ## Skill links
 
-Each enabled global skill links directly into the documented Codex user skill path:
+`~/.agents/skills` is the only user-level path Codex reads, so it carries the `agents`
+surface:
 
 ```text
 ~/.agents/skills/<name>
-  -> <skills-root>/skills/<name>
+  -> <skills-root>/.build/agents/<name>
 ```
 
 Codex follows symlinked skill directories. It initially loads skill names and
 descriptions, then reads a full `SKILL.md` when the skill runs.
 
+`$CODEX_HOME/skills` holds skills bundled with Codex under `.system`. skctl does not write
+there.
+
+## Frontmatter
+
+The `agents` surface holds the strict [Agent Skills](https://agentskills.io) baseline:
+
+```text
+name  description  license  compatibility  metadata  allowed-tools
+```
+
+Nothing else survives compilation for this surface, which keeps the shared copy on
+the portable Agent Skills baseline.
+
+## Duplicate names
+
+Codex does not merge duplicates. Its documentation says that when a skill name conflicts,
+"both can appear in skill selectors." A skill whose surfaces carry different instructions is
+reported by `skctl apply` for exactly this reason.
+
+See [surfaces and overlays](../surfaces.md).
+
 ## References
 
-- [Codex AGENTS.md discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Codex skill discovery](https://learn.chatgpt.com/docs/build-skills)
+- [Codex AGENTS.md discovery](https://developers.openai.com/codex/guides/agents-md)
+- [Codex skill discovery](https://developers.openai.com/codex/skills)

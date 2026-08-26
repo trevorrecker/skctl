@@ -16,8 +16,10 @@ import { defaultManifest } from "./manifest.js";
 import {
   addRemote,
   detachRemoteSkill,
+  discoverRemoteCatalog,
   discoverRemoteSkills,
   listRemotes,
+  pruneSkillEntries,
   remoteAlias,
   removeRemote,
   resolveRemoteSkills,
@@ -53,10 +55,10 @@ test("sync links masked remote skills and skips unmasked ones", () => {
   sync(paths, remoteManifest("pocock", ["wayfinder", "grilling"]), false);
 
   for (const name of ["wayfinder", "grilling"]) {
-    assert.ok(lstatSync(join(paths.agentsSkills, name)).isSymbolicLink());
-    assert.ok(existsSync(join(paths.claudeSkills, name, "SKILL.md")));
+    assert.ok(lstatSync(join(paths.surfaceDirs.agents, name)).isSymbolicLink());
+    assert.ok(existsSync(join(paths.surfaceDirs.claude, name, "SKILL.md")));
   }
-  assert.equal(existsSync(join(paths.agentsSkills, "unwanted")), false);
+  assert.equal(existsSync(join(paths.surfaceDirs.agents, "unwanted")), false);
 });
 
 test("unmasking a remote skill prunes its links", () => {
@@ -68,9 +70,9 @@ test("unmasking a remote skill prunes its links", () => {
   sync(paths, remoteManifest("pocock", ["wayfinder", "grilling"]), false);
   sync(paths, remoteManifest("pocock", ["wayfinder"]), false);
 
-  assert.ok(existsSync(join(paths.agentsSkills, "wayfinder")));
-  assert.equal(existsSync(join(paths.agentsSkills, "grilling")), false);
-  assert.equal(existsSync(join(paths.claudeSkills, "grilling")), false);
+  assert.ok(existsSync(join(paths.surfaceDirs.agents, "wayfinder")));
+  assert.equal(existsSync(join(paths.surfaceDirs.agents, "grilling")), false);
+  assert.equal(existsSync(join(paths.surfaceDirs.claude, "grilling")), false);
 });
 
 test("a local skill shadows the remote one with a conflict", () => {
@@ -85,7 +87,7 @@ test("a local skill shadows the remote one with a conflict", () => {
 
   const conflict = report.skills.find((action) => action.kind === "conflict");
   assert.match(conflict?.detail ?? "", /shadows remote 'pocock'/);
-  const target = join(paths.agentsSkills, "grilling");
+  const target = join(paths.surfaceDirs.agents, "grilling");
   assert.ok(lstatSync(target).isSymbolicLink());
   assert.ok(existsSync(join(target, "SKILL.md")));
 });
@@ -202,12 +204,29 @@ test("detachRemoteSkill copies the current remote skill and removes its mask", (
   );
 });
 
+test("detachRemoteSkill refuses duplicate qualified selections with the same name", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-remote-"));
+  const paths = resolveSkillPaths(home);
+  seedPluginClone(home, "plugins", [
+    "one/skills/shared",
+    "two/skills/shared",
+  ]);
+  const manifest = remoteManifest("plugins", ["one/shared", "two/shared"]);
+
+  const result = detachRemoteSkill(paths, manifest, "shared", false);
+
+  assert.equal(result.action.kind, "conflict");
+  assert.deepEqual(result.manifest, manifest);
+  assert.equal(existsSync(join(paths.sourceSkills, "shared")), false);
+});
+
 test("remoteAlias derives a kebab-case alias from common url shapes", () => {
-  assert.equal(remoteAlias("https://github.com/dmmulroy/anti-slop"), "anti-slop");
+  assert.equal(remoteAlias("https://github.com/owner/skill-pack"), "skill-pack");
   assert.equal(remoteAlias("https://github.com/mattpocock/skills.git"), "skills");
   assert.equal(remoteAlias("git@github.com:owner/My_Repo.git"), "my-repo");
   assert.equal(remoteAlias("https://example.com/repo/"), "repo");
   assert.equal(remoteAlias("/tmp/local-source"), "local-source");
+  assert.equal(remoteAlias("C:\\work\\local-source"), "local-source");
 });
 
 test("discoverRemoteSkills finds skills at any depth", () => {
@@ -217,6 +236,216 @@ test("discoverRemoteSkills finds skills at any depth", () => {
 
   assert.deepEqual(discoverRemoteSkills(clone), ["alpha", "beta"]);
   assert.deepEqual(discoverRemoteSkills(join(clone, "missing")), []);
+});
+
+test("discoverRemoteSkills does not stop at an arbitrary nesting depth", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-discover-"));
+  const clone = join(resolveSkillPaths(home).remotesDir, "deep");
+  const skillDir = join(
+    clone,
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "deep-skill",
+  );
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, "SKILL.md"), "---\nname: deep-skill\n---\n\nbody\n");
+
+  assert.deepEqual(discoverRemoteSkills(clone), ["deep-skill"]);
+});
+
+const seedPluginClone = (home: string, alias: string, skillPaths: string[]): string => {
+  const clone = join(resolveSkillPaths(home).remotesDir, alias);
+  for (const path of skillPaths) {
+    const dir = join(clone, path);
+    mkdirSync(dir, { recursive: true });
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\n---\n\nbody\n`);
+  }
+  return clone;
+};
+
+const writePluginManifest = (
+  clone: string,
+  group: string,
+  manifestDir: string,
+  body: string,
+): void => {
+  const dir = join(clone, group, manifestDir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.json"), body);
+};
+
+test("resolveRemoteSkills qualifies duplicate skill names by path", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-qualified-"));
+  const paths = resolveSkillPaths(home);
+  const clone = seedPluginClone(home, "plugins", [
+    "pstack/skills/unslop",
+    "pstack/skills/bro",
+    "third_party/github/skills/unslop",
+  ]);
+
+  const resolution = resolveRemoteSkills(
+    paths,
+    remoteManifest("plugins", [
+      "pstack/unslop",
+      "third_party/github/skills/unslop",
+      "skills/bro",
+    ]),
+  );
+
+  assert.deepEqual(resolution.problems, []);
+  assert.deepEqual(
+    resolution.skills.map((skill) => skill.sourceDir),
+    [
+      join(clone, "pstack", "skills", "unslop"),
+      join(clone, "third_party", "github", "skills", "unslop"),
+      join(clone, "pstack", "skills", "bro"),
+    ],
+  );
+  assert.deepEqual(
+    resolution.skills.map((skill) => skill.name),
+    ["unslop", "unslop", "bro"],
+  );
+  assert.deepEqual(
+    resolution.skills.map((skill) => skill.group?.path),
+    ["pstack", "third_party/github", "pstack"],
+  );
+  assert.equal(
+    resolveRemoteSkills(paths, remoteManifest("plugins", ["bro"])).skills[0]?.path,
+    "pstack/skills/bro",
+  );
+});
+
+test("resolveRemoteSkills names the candidates behind an ambiguous bare selector", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-ambiguous-"));
+  const paths = resolveSkillPaths(home);
+  seedPluginClone(home, "plugins", [
+    "pstack/skills/unslop",
+    "third_party/github/skills/unslop",
+  ]);
+
+  const resolution = resolveRemoteSkills(paths, remoteManifest("plugins", ["unslop"]));
+
+  assert.deepEqual(resolution.skills, []);
+  assert.equal(resolution.problems.length, 1);
+  assert.match(resolution.problems[0].detail, /2 skills matching 'unslop'/);
+  assert.match(resolution.problems[0].note ?? "", /pstack\/unslop/);
+  assert.match(resolution.problems[0].note ?? "", /github\/unslop/);
+});
+
+test("discoverRemoteCatalog qualifies each skill and reads its plugin manifest", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-catalog-"));
+  const clone = seedPluginClone(home, "plugins", [
+    "pstack/skills/unslop",
+    "third_party/github/skills/unslop",
+    "broken/skills/loose",
+    "plain/skills/tidy",
+  ]);
+  writePluginManifest(
+    clone,
+    "pstack",
+    ".cursor-plugin",
+    JSON.stringify({ name: "pstack", displayName: "PStack", description: "prompt stack" }),
+  );
+  writePluginManifest(
+    clone,
+    "third_party/github",
+    ".claude-plugin",
+    JSON.stringify({ name: "github" }),
+  );
+  writePluginManifest(clone, "broken", ".cursor-plugin", "{ not json");
+
+  const catalog = discoverRemoteCatalog(clone, ["pstack/unslop"]);
+  const byPath = new Map(catalog.map((entry) => [entry.path, entry]));
+
+  assert.deepEqual(
+    catalog.map((entry) => entry.path),
+    [
+      "broken/skills/loose",
+      "plain/skills/tidy",
+      "pstack/skills/unslop",
+      "third_party/github/skills/unslop",
+    ],
+  );
+  assert.deepEqual(byPath.get("pstack/skills/unslop")?.group, {
+    path: "pstack",
+    name: "PStack",
+    description: "prompt stack",
+  });
+  assert.equal(byPath.get("pstack/skills/unslop")?.selected, true);
+  assert.equal(byPath.get("pstack/skills/unslop")?.selector, "pstack/unslop");
+  assert.equal(byPath.get("third_party/github/skills/unslop")?.group?.name, "github");
+  assert.equal(byPath.get("third_party/github/skills/unslop")?.group?.description, undefined);
+  assert.equal(byPath.get("third_party/github/skills/unslop")?.selected, false);
+  assert.equal(byPath.get("third_party/github/skills/unslop")?.selector, "github/unslop");
+  assert.deepEqual(byPath.get("broken/skills/loose")?.group, { path: "broken" });
+  assert.deepEqual(byPath.get("plain/skills/tidy")?.group, { path: "plain" });
+  assert.deepEqual(discoverRemoteSkills(clone), ["loose", "tidy", "unslop"]);
+});
+
+test("listRemotes reports the qualified catalog beside the flat name list", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-catalog-list-"));
+  const paths = resolveSkillPaths(home);
+  seedPluginClone(home, "plugins", [
+    "pstack/skills/unslop",
+    "third_party/github/skills/unslop",
+  ]);
+
+  const [info] = listRemotes(paths, remoteManifest("plugins", ["pstack/unslop"]));
+
+  assert.deepEqual(info.available, ["github/unslop", "pstack/unslop"]);
+  assert.deepEqual(
+    info.available.filter((selector) => !info.skills.includes(selector)),
+    ["github/unslop"],
+  );
+  assert.deepEqual(
+    info.catalog.filter((entry) => entry.selected).map((entry) => entry.path),
+    ["pstack/skills/unslop"],
+  );
+  assert.deepEqual(
+    info.catalog.map((entry) => entry.group?.path),
+    ["pstack", "third_party/github"],
+  );
+});
+
+test("addRemote qualifies selections from an existing tracked clone", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-add-qualified-"));
+  const paths = resolveSkillPaths(home);
+  seedPluginClone(home, "plugins", [
+    "pstack/skills/bro",
+    "pstack/skills/unslop",
+    "third_party/github/skills/unslop",
+  ]);
+  const url = "https://example.com/plugins.git";
+  const manifest: SkillsManifest = {
+    ...defaultManifest(),
+    remotes: { plugins: { url, skills: [] } },
+  };
+
+  const added = addRemote(paths, manifest, url, { alias: "plugins" });
+  assert.equal(added.action.kind, "ok");
+  assert.deepEqual(added.selected, ["bro", "github/unslop", "pstack/unslop"]);
+  assert.deepEqual(resolveRemoteSkills(paths, added.manifest).problems, []);
+
+  const ambiguous = addRemote(paths, manifest, url, {
+    alias: "plugins",
+    skills: ["unslop"],
+  });
+  assert.equal(ambiguous.action.kind, "conflict");
+  assert.match(ambiguous.action.detail, /matches 2 skills/);
+  assert.match(ambiguous.action.note ?? "", /pstack\/unslop/);
+
+  const picked = addRemote(paths, manifest, url, {
+    alias: "plugins",
+    skills: ["github/unslop"],
+  });
+  assert.deepEqual(picked.selected, ["github/unslop"]);
+  assert.deepEqual(picked.manifest.remotes.plugins.skills, ["github/unslop"]);
 });
 
 const seedUpstream = (home: string, skillNames: string[], dir = "upstream"): string => {
@@ -259,6 +488,38 @@ test("addRemote clones, selects every discovered skill, and derives an alias", (
   assert.ok(existsSync(join(paths.remotesDir, "upstream", "skills", "alpha", "SKILL.md")));
 });
 
+test("addRemote force-replaces a changed origin only after the new clone succeeds", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-add-"));
+  const firstUpstream = seedUpstream(home, ["alpha"], "first-upstream");
+  const secondUpstream = seedUpstream(home, ["beta"], "second-upstream");
+  const paths = resolveSkillPaths(home, join(home, "root"));
+  const first = addRemote(paths, defaultManifest(), firstUpstream, { alias: "fixture" });
+
+  const failed = addRemote(paths, first.manifest, join(home, "missing"), {
+    alias: "fixture",
+    force: true,
+  });
+  assert.equal(failed.action.kind, "conflict");
+  assert.ok(existsSync(join(paths.remotesDir, "fixture", "skills", "alpha", "SKILL.md")));
+
+  const replaced = addRemote(paths, first.manifest, secondUpstream, {
+    alias: "fixture",
+    force: true,
+  });
+
+  assert.equal(replaced.action.kind, "replaced");
+  assert.deepEqual(replaced.available, ["beta"]);
+  assert.equal(replaced.manifest.remotes.fixture?.url, secondUpstream);
+  assert.equal(existsSync(join(paths.remotesDir, "fixture", "skills", "alpha")), false);
+  assert.ok(existsSync(join(paths.remotesDir, "fixture", "skills", "beta", "SKILL.md")));
+  assert.equal(
+    execFileSync("git", ["-C", join(paths.remotesDir, "fixture"), "remote", "get-url", "origin"], {
+      encoding: "utf-8",
+    }).trim(),
+    secondUpstream,
+  );
+});
+
 test("addRemote narrows the selection and reports names the remote lacks", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-add-"));
   const upstream = seedUpstream(home, ["alpha", "beta", "gamma"]);
@@ -299,6 +560,29 @@ test("addRemote refuses a taken alias and rejects a repository with no skills", 
   assert.equal(existsSync(join(paths.remotesDir, "bare")), false);
 });
 
+test("remote operations reject aliases that escape the remotes directory", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-alias-"));
+  const paths = resolveSkillPaths(home, join(home, "root"));
+  const outside = join(paths.sourceRepo, "outside");
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "keep.txt"), "keep\n");
+  const manifest: SkillsManifest = {
+    ...defaultManifest(),
+    remotes: { "../outside": { url: "https://example.test/repo.git", skills: [] } },
+  };
+
+  const added = addRemote(paths, defaultManifest(), "https://example.test/repo.git", {
+    alias: "../outside",
+  });
+  const updated = updateRemotes(paths, manifest);
+  const removed = removeRemote(paths, manifest, "../outside", false);
+
+  assert.equal(added.action.kind, "conflict");
+  assert.equal(updated[0]?.kind, "conflict");
+  assert.equal(removed.action.kind, "conflict");
+  assert.equal(readFileSync(join(outside, "keep.txt"), "utf-8"), "keep\n");
+});
+
 test("removeRemote drops the clone, the entry, and selections it alone supplied", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-remove-"));
   const upstream = seedUpstream(home, ["alpha", "beta"]);
@@ -330,4 +614,42 @@ test("listRemotes reports what a clone offers beyond the selection", () => {
   assert.deepEqual(info.skills, ["wayfinder"]);
   assert.deepEqual(info.available, ["grilling", "spare", "wayfinder"]);
   assert.equal(info.cloned, true);
+});
+
+test("pruneSkillEntries drops an entry for a deselected skill and keeps the rest", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-prune-"));
+  const paths = resolveSkillPaths(home, join(home, "root"));
+  mkdirSync(join(paths.sourceSkills, "mine"), { recursive: true });
+  writeFileSync(join(paths.sourceSkills, "mine", "SKILL.md"), "---\nname: mine\n---\n");
+  const manifest: SkillsManifest = {
+    ...defaultManifest(),
+    remotes: { fixture: { url: "https://example.test/repo", skills: ["kept"] } },
+    skills: {
+      kept: { tags: ["work"] },
+      dropped: { tags: ["work"] },
+      mine: { enabled: false },
+      elsewhere: { tags: ["stale"] },
+    },
+  };
+
+  const pruned = pruneSkillEntries(paths, manifest, ["group/dropped"]);
+
+  assert.deepEqual(Object.keys(pruned.skills).sort(), ["elsewhere", "kept", "mine"]);
+});
+
+test("pruneSkillEntries keeps a deselected skill that another remote still supplies", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-prune-"));
+  const paths = resolveSkillPaths(home, join(home, "root"));
+  const manifest: SkillsManifest = {
+    ...defaultManifest(),
+    remotes: {
+      one: { url: "https://example.test/one", skills: [] },
+      two: { url: "https://example.test/two", skills: ["shared"] },
+    },
+    skills: { shared: { tags: ["work"] } },
+  };
+
+  const pruned = pruneSkillEntries(paths, manifest, ["shared"]);
+
+  assert.deepEqual(Object.keys(pruned.skills), ["shared"]);
 });

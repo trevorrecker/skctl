@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -15,7 +16,8 @@ import {
   importInstructions,
   removeInstructionLink,
 } from "./skills/instructions.js";
-import { createCommand, createSkill, validateName } from "./skills/create.js";
+import { createCommand, createSkill } from "./skills/create.js";
+import { validateName } from "./skills/names.js";
 import {
   loadManifest,
   saveManifest,
@@ -23,7 +25,18 @@ import {
   setHosts,
   setTags,
 } from "./skills/manifest.js";
-import { resolveProjectPaths, resolveSkillPaths } from "./skills/paths.js";
+import {
+  resolveProjectPaths,
+  resolveProjectTarget,
+  resolveSkillPaths,
+} from "./skills/paths.js";
+import {
+  loadProjectConfig,
+  reconcileProject,
+  removeProject,
+  saveProjectConfig,
+  selectForProject,
+} from "./skills/project.js";
 import {
   addRemote,
   detachRemoteSkill,
@@ -36,7 +49,8 @@ import { isSymlink, pathPresent } from "./skills/fsx.js";
 import { sync } from "./skills/sync.js";
 import { AllHosts } from "./skills/types.js";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
-import type { SkillPaths } from "./skills/paths.js";
+import type { ProjectTarget, SkillPaths } from "./skills/paths.js";
+import type { ProjectConfig, ProjectMode, ProjectReport } from "./skills/project.js";
 import type { Action, Collection, Host } from "./skills/types.js";
 import {
   configPath,
@@ -49,6 +63,7 @@ import {
   setInstructionTarget,
   setTagActive,
 } from "./config.js";
+import { browse } from "./browse.js";
 import { defaultRaycastDir, syncRaycast } from "./raycast.js";
 import {
   getScheduleStatus,
@@ -58,6 +73,7 @@ import {
 import {
   applyData,
   conflictCount,
+  remoteCatalogLines,
   renderApply,
   renderCommands,
   renderDetails,
@@ -70,7 +86,6 @@ import {
   renderTags,
   renderUsage,
   statusData,
-  unselectedSkills,
 } from "./render.js";
 import type { ApplyResult, ReportSection, TagInfo } from "./render.js";
 import { Marks, dim, setColor, shortPath } from "./ui.js";
@@ -78,6 +93,8 @@ import type { DetailPair } from "./ui.js";
 
 interface Args {
   positional: string[];
+  help: boolean;
+  version: boolean;
   root?: string;
   project?: string | true;
   output?: string;
@@ -94,6 +111,7 @@ interface Args {
   paste: boolean;
   noPaste: boolean;
   noRaycast: boolean;
+  projectMode?: ProjectMode;
   apply: boolean;
   force: boolean;
 }
@@ -107,6 +125,8 @@ interface CommandOutput {
 const parseArgs = (argv: string[]): Args => {
   const args: Args = {
     positional: [],
+    help: false,
+    version: false,
     dryRun: false,
     quiet: false,
     paste: false,
@@ -117,38 +137,54 @@ const parseArgs = (argv: string[]): Args => {
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    const value = (inline?: string): string => inline ?? argv[(index += 1)];
+    const value = (inline?: string): string => {
+      if (inline !== undefined) {
+        if (inline === "") throw new Error(`${token} requires a value`);
+        return inline;
+      }
+      const next = argv[index + 1];
+      if (next === undefined || (next.startsWith("-") && next !== "-")) {
+        throw new Error(`${token} requires a value`);
+      }
+      index += 1;
+      return next;
+    };
     if (token === "--dry-run") args.dryRun = true;
+    else if (token === "-h" || token === "--help") args.help = true;
+    else if (token === "-v" || token === "--version") args.version = true;
     else if (token === "-q" || token === "--quiet") args.quiet = true;
     else if (token === "--color") args.color = true;
     else if (token === "--no-color") args.color = false;
     else if (token === "--paste") args.paste = true;
     else if (token === "--no-paste") args.noPaste = true;
     else if (token === "--no-raycast") args.noRaycast = true;
+    else if (token === "--copy") args.projectMode = "copy";
+    else if (token === "--link") args.projectMode = "link";
     else if (token === "--apply") args.apply = true;
     else if (token === "--force") args.force = true;
     else if (token === "--project") args.project = true;
-    else if (token.startsWith("--project=")) args.project = token.slice("--project=".length);
+    else if (token.startsWith("--project=")) args.project = value(token.slice("--project=".length));
     else if (token === "--root") args.root = value();
-    else if (token.startsWith("--root=")) args.root = token.slice("--root=".length);
+    else if (token.startsWith("--root=")) args.root = value(token.slice("--root=".length));
     else if (token === "--dir") args.dir = value();
-    else if (token.startsWith("--dir=")) args.dir = token.slice("--dir=".length);
+    else if (token.startsWith("--dir=")) args.dir = value(token.slice("--dir=".length));
     else if (token === "-d" || token === "--description") args.description = value();
-    else if (token.startsWith("-d=")) args.description = token.slice("-d=".length);
-    else if (token.startsWith("--description=")) args.description = token.slice("--description=".length);
+    else if (token.startsWith("-d=")) args.description = value(token.slice("-d=".length));
+    else if (token.startsWith("--description=")) args.description = value(token.slice("--description=".length));
     else if (token === "--body") args.body = value();
-    else if (token.startsWith("--body=")) args.body = token.slice("--body=".length);
+    else if (token.startsWith("--body=")) args.body = value(token.slice("--body=".length));
     else if (token === "--argument-hint" || token === "--arg-hint") args.argumentHint = value();
-    else if (token.startsWith("--argument-hint=")) args.argumentHint = token.slice("--argument-hint=".length);
+    else if (token.startsWith("--argument-hint=")) args.argumentHint = value(token.slice("--argument-hint=".length));
     else if (token === "--hosts") args.hosts = value();
-    else if (token.startsWith("--hosts=")) args.hosts = token.slice("--hosts=".length);
+    else if (token.startsWith("--hosts=")) args.hosts = value(token.slice("--hosts=".length));
     else if (token === "--tags") args.tags = value();
-    else if (token.startsWith("--tags=")) args.tags = token.slice("--tags=".length);
+    else if (token.startsWith("--tags=")) args.tags = value(token.slice("--tags=".length));
     else if (token === "--skills") args.skills = value();
-    else if (token.startsWith("--skills=")) args.skills = token.slice("--skills=".length);
+    else if (token.startsWith("--skills=")) args.skills = value(token.slice("--skills=".length));
     else if (token === "-o" || token === "--output") args.output = value();
-    else if (token.startsWith("-o=")) args.output = token.slice("-o=".length);
-    else if (token.startsWith("--output=")) args.output = token.slice("--output=".length);
+    else if (token.startsWith("-o=")) args.output = value(token.slice("-o=".length));
+    else if (token.startsWith("--output=")) args.output = value(token.slice("--output=".length));
+    else if (token.startsWith("-")) throw new Error(`unknown option: ${token}`);
     else args.positional.push(token);
   }
   return args;
@@ -195,8 +231,8 @@ const resolveResource = (token: string | undefined): Resource | undefined => {
   }
 };
 
-const OutputFormats = ["wide", "name", "json", "body", "raw"] as const;
-type OutFmt = (typeof OutputFormats)[number];
+type OutFmt = "wide" | "name" | "json" | "body" | "raw";
+const OutputFormats: readonly OutFmt[] = ["wide", "name", "json", "body", "raw"];
 
 const parseOutput = (output: string | undefined): OutFmt => {
   const value = output ?? "wide";
@@ -312,15 +348,24 @@ const findCommand = (paths: SkillPaths, name: string): CommandInfo => {
 
 const yesNo = (value: boolean): string => (value ? "yes" : "no");
 
-const describeSkill = (paths: SkillPaths, info: SkillInfo): string =>
+const describeSkill = (info: SkillInfo): string =>
   renderDetails(
     "skill",
     info.name,
     [
       ["enabled", yesNo(info.enabled)],
       ["hosts", info.hosts.join(", ")],
+      [
+        "surfaces",
+        info.spill.length > 0
+          ? `${info.surfaces.join(", ")}  ${dim(`also read by ${info.spill.join(", ")}`)}`
+          : info.surfaces.join(", "),
+      ],
       ["tags", info.tags.length > 0 ? info.tags.join(", ") : dim(Marks.none)],
       ...(info.remote === undefined ? [] : [["remote", info.remote] satisfies DetailPair]),
+      ...(info.overlay === undefined
+        ? []
+        : [["overlay", shortPath(info.overlay)] satisfies DetailPair]),
       ["paste", yesNo(info.paste)],
       ["path", shortPath(info.path)],
     ],
@@ -344,7 +389,7 @@ const getSkill = (paths: SkillPaths, name: string, fmt: OutFmt): CommandOutput =
   if (fmt === "body") return { text: skillContent(paths, name, false), data: info };
   if (fmt === "raw") return { text: skillContent(paths, name, true), data: info };
   if (fmt === "name") return { text: info.name, data: info };
-  return { text: describeSkill(paths, info), data: info };
+  return { text: describeSkill(info), data: info };
 };
 
 const getCommand = (paths: SkillPaths, name: string, fmt: OutFmt): CommandOutput => {
@@ -363,18 +408,12 @@ const getRemote = (paths: SkillPaths, name: string, fmt: OutFmt): CommandOutput 
   if (fmt === "body" || fmt === "raw") throw new Error("-o body|raw not valid for remotes");
   if (fmt === "name") return { text: info.alias, data: info };
   const state = info.cloned ? (info.head ? `cloned@${info.head}` : "cloned") : "not cloned";
-  const spare = unselectedSkills(info);
   return {
     text: renderDetails("remote", info.alias, [
       ["url", info.url],
       ["state", state],
-      ["selected", info.skills.length > 0 ? info.skills.join(", ") : dim(Marks.none)],
-      [
-        "available",
-        spare.length > 0
-          ? spare.join(", ")
-          : dim(info.cloned ? Marks.none : "unknown until cloned"),
-      ],
+      ["selected", `${info.skills.length} of ${info.cloned ? info.catalog.length : "?"}`],
+      ["skills", remoteCatalogLines(info)],
     ]),
     data: info,
   };
@@ -403,14 +442,14 @@ const describeDispatch = (args: Args): CommandOutput => {
     return { text: describeCommand(info), data: info };
   }
   const info = findSkill(paths, name);
-  return { text: describeSkill(paths, info), data: info };
+  return { text: describeSkill(info), data: info };
 };
 
 const raycastTarget = (args: Args): string =>
   args.dir ?? loadConfig().raycastDir ?? defaultRaycastDir();
 
 const raycastEnabled = (args: Args): boolean =>
-  !args.noRaycast && loadConfig().raycastEnabled !== false;
+  !args.noRaycast && (loadConfig().raycastEnabled ?? process.platform === "darwin");
 
 const scheduledRemoteRefresh = (
   paths: SkillPaths,
@@ -480,7 +519,7 @@ const applyResult = (
     verb: opts.verb ?? "apply",
     dryRun: opts.dryRun,
     root: paths.sourceRepo,
-    hosts: paths.commandHosts,
+    hosts: [...AllHosts],
     sections,
   };
 };
@@ -500,7 +539,7 @@ const applyDispatch = (args: Args): CommandOutput => {
   return applyOutput(applyResult(paths, args, { dryRun: args.dryRun }), args);
 };
 
-const looksLikeUrl = (value: string): boolean => /[:/]/.test(value);
+const looksLikeUrl = (value: string): boolean => /[:/\\]/.test(value);
 
 const resolvePullTarget = (
   manifest: ReturnType<typeof loadManifest>,
@@ -587,6 +626,8 @@ const toggleDispatch = (args: Args, enabled: boolean): CommandOutput => {
   if (!name) throw new Error(`usage: skctl ${verb} skill|command <name>`);
   const paths = resolveScope(args);
   const collection: Collection = resource;
+  if (collection === "skills") findSkill(paths, name);
+  else findCommand(paths, name);
   saveManifest(
     paths.manifestPath,
     setEnabled(loadManifest(paths.manifestPath), collection, name, enabled),
@@ -735,7 +776,7 @@ const detachDispatch = (args: Args): CommandOutput => {
         verb: "detach",
         dryRun: args.dryRun,
         root: paths.sourceRepo,
-        hosts: paths.commandHosts,
+        hosts: [...AllHosts],
         sections: [{ name: "detach", actions: [result.action] }],
       },
       args,
@@ -841,14 +882,14 @@ const configDispatch = (args: Args): CommandOutput => {
     const resolved = resolveRoot({ flagRoot: args.root });
     root = `${shortPath(resolved.root)} ${dim(`(${resolved.source})`)}`;
   } catch {
-    root = dim("unset — run `skctl init <dir>` or set SKCTL_ROOT");
+    root = dim("unset; run `skctl init <dir>` or set SKCTL_ROOT");
   }
   return {
     text: renderDetails("config", shortPath(configPath()), [
       ["root", root],
       [
         "raycast",
-        `${config.raycastEnabled === false ? "off" : "on"}  ${dim(
+        `${(config.raycastEnabled ?? process.platform === "darwin") ? "on" : "off"}  ${dim(
           config.raycastDir === undefined
             ? `${shortPath(defaultRaycastDir())} (default)`
             : shortPath(config.raycastDir),
@@ -865,20 +906,21 @@ const configDispatch = (args: Args): CommandOutput => {
   };
 };
 
-const scheduleEnvironment = (): Record<string, string> => {
-  const environment: Record<string, string> = { HOME: homedir() };
-  for (const key of [
-    "CLAUDE_CONFIG_DIR",
-    "CODEX_HOME",
-    "OPENCODE_CONFIG_DIR",
-    "SKCTL_ROOT",
-    "XDG_CONFIG_HOME",
-  ]) {
-    const value = process.env[key];
-    if (value !== undefined) environment[key] = value;
-  }
-  return environment;
-};
+const scheduleEnvironment = () =>
+  Object.fromEntries([
+    ["HOME", homedir()],
+    ...[
+      "CLAUDE_CONFIG_DIR",
+      "CODEX_HOME",
+      "CURSOR_CONFIG_DIR",
+      "OPENCODE_CONFIG_DIR",
+      "SKCTL_ROOT",
+      "XDG_CONFIG_HOME",
+    ].flatMap((key) => {
+      const value = process.env[key];
+      return value === undefined ? [] : [[key, value]];
+    }),
+  ]);
 
 const scheduleDispatch = (args: Args): CommandOutput => {
   if (args.project !== undefined) {
@@ -963,9 +1005,7 @@ const prompt = async (question: string): Promise<string> => {
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
-    // SAFETY: no encoding is set on stdin, so the stream yields Buffer chunks. Node
-    // types the async iterator loosely, which is the only reason this needs stating.
-    chunks.push(chunk as Buffer);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
   return Buffer.concat(chunks).toString("utf-8");
 };
@@ -997,7 +1037,7 @@ const createDispatch = async (args: Args): Promise<CommandOutput> => {
 
   let name = args.positional[2];
   if (!name && interactive) name = (await prompt("name: ")).trim();
-  if (!name) throw new Error("create requires a <name> — pass it as an argument or run in a terminal");
+  if (!name) throw new Error("create requires a <name>; pass it as an argument or run in a terminal");
   validateName(name);
 
   let description = args.description;
@@ -1052,7 +1092,7 @@ const remoteAddDispatch = (args: Args, paths: SkillPaths): CommandOutput => {
         verb: "remote add",
         dryRun: false,
         root: paths.sourceRepo,
-        hosts: paths.commandHosts,
+        hosts: [...AllHosts],
         sections: [{ name: "remotes", actions: [result.action] }],
       },
       args,
@@ -1081,7 +1121,7 @@ const remoteRemoveDispatch = (args: Args, paths: SkillPaths): CommandOutput => {
         verb: "remote remove",
         dryRun: args.dryRun,
         root: paths.sourceRepo,
-        hosts: paths.commandHosts,
+        hosts: [...AllHosts],
         sections: [{ name: "remotes", actions: [result.action] }],
       },
       args,
@@ -1138,7 +1178,161 @@ const raycastDispatch = (args: Args): CommandOutput => {
   );
 };
 
+const browseDispatch = async (args: Args): Promise<CommandOutput> => {
+  const paths = resolveScope(args);
+  const result = await browse(paths, loadManifest(paths.manifestPath), {
+    target: args.positional[1],
+    interactive:
+      process.stdin.isTTY === true && process.stdout.isTTY === true && args.output !== "json",
+  });
+  if (result.manifest === undefined) return { text: result.text, data: result.data };
+  saveManifest(paths.manifestPath, result.manifest);
+  return applyOutput(
+    applyResult(paths, args, {
+      verb: "browse",
+      dryRun: false,
+      refreshRemotes: false,
+      leading: [{ name: "remotes", actions: result.actions ?? [] }],
+    }),
+    args,
+    result.notices ?? [],
+  );
+};
+
+const globalScope = (args: Args): SkillPaths => {
+  const config = loadConfig();
+  const { root } = resolveRoot({ flagRoot: args.root });
+  return resolveSkillPaths(
+    homedir(),
+    root,
+    undefined,
+    undefined,
+    undefined,
+    config.instructionTargets,
+  );
+};
+
+const projectReport = (
+  target: ProjectTarget,
+  report: ProjectReport,
+  args: Args,
+  verb: string,
+  notices: string[],
+): CommandOutput =>
+  applyOutput(
+    {
+      verb,
+      dryRun: args.dryRun,
+      root: target.root,
+      hosts: [...AllHosts],
+      sections: [
+        {
+          name: "skills",
+          note: `${report.config.mode} · ${report.selected.length} selected`,
+          actions: report.actions,
+        },
+      ],
+    },
+    args,
+    notices,
+  );
+
+const projectDispatch = (args: Args): CommandOutput => {
+  const operation = args.positional[1] ?? "apply";
+  const target = resolveProjectTarget(args.dir ?? process.cwd());
+  const existing = loadProjectConfig(target);
+
+  if (operation === "init") {
+    const tags = args.tags?.split(",").map((tag) => tag.trim()).filter(Boolean) ?? [];
+    const skills = args.skills?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
+    if (tags.length === 0 && skills.length === 0) {
+      throw new Error(
+        "project init needs a selector; pass --tags <a,b> or --skills <x,y>",
+      );
+    }
+    const paths = globalScope(args);
+    const mode = args.projectMode ?? existing?.mode ?? "link";
+    if (existing !== undefined && args.projectMode !== undefined && existing.mode !== mode) {
+      throw new Error(
+        `project already uses ${existing.mode} mode; run \`skctl project remove\` before changing modes`,
+      );
+    }
+    const config: ProjectConfig = {
+      from: paths.sourceRepo,
+      tags,
+      skills,
+      mode,
+      written: mode === "copy" ? existing?.written : undefined,
+    };
+    const report = reconcileProject(paths, target, config, args.dryRun);
+    if (!args.dryRun) saveProjectConfig(target, report.config);
+    return projectReport(target, report, args, "project init", [
+      `projected ${report.selected.length} skill(s) from ${shortPath(paths.sourceRepo)}`,
+      dim(`config: ${shortPath(target.configPath)}`),
+    ]);
+  }
+
+  if (existing === undefined) {
+    throw new Error(
+      `no project config at ${shortPath(target.configPath)}\nrun \`skctl project init --tags <a,b>\` first`,
+    );
+  }
+  const paths = globalScope({ ...args, root: args.root ?? existing.from });
+
+  if (operation === "status") {
+    const manifest = loadManifest(paths.manifestPath);
+    const selected = selectForProject(paths, manifest, existing);
+    return {
+      text: renderDetails("project", shortPath(target.root), [
+        ["from", shortPath(existing.from)],
+        ["mode", existing.mode],
+        ["tags", existing.tags.length > 0 ? existing.tags.join(", ") : dim(Marks.none)],
+        ["skills", existing.skills.length > 0 ? existing.skills.join(", ") : dim(Marks.none)],
+        ["selected", selected.map((entry) => entry.name)],
+      ]),
+      data: { target: target.root, config: existing, selected: selected.map((e) => e.name) },
+    };
+  }
+
+  if (operation === "remove") {
+    const actions = removeProject(target, existing, args.dryRun);
+    return applyOutput(
+      {
+        verb: "project remove",
+        dryRun: args.dryRun,
+        root: target.root,
+        hosts: [...AllHosts],
+        sections: [{ name: "skills", actions }],
+      },
+      args,
+      [`removed the projection in ${shortPath(target.root)}`],
+    );
+  }
+
+  if (operation !== "apply") {
+    throw new Error("usage: skctl project [apply]|init|status|remove");
+  }
+  const report = reconcileProject(paths, target, existing, args.dryRun);
+  if (!args.dryRun) saveProjectConfig(target, report.config);
+  return projectReport(target, report, args, "project", []);
+};
+
 const dispatch = async (args: Args): Promise<CommandOutput> => {
+  if (args.version) {
+    const parsed: unknown = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+    );
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("version" in parsed) ||
+      typeof parsed.version !== "string"
+    ) {
+      throw new Error("package version is unavailable");
+    }
+    return { text: parsed.version, data: { version: parsed.version } };
+  }
+  if (args.help) return { text: renderUsage() };
   switch (args.positional[0]) {
     case "init":
       return initDispatch(args);
@@ -1178,8 +1372,12 @@ const dispatch = async (args: Args): Promise<CommandOutput> => {
     case "remote":
     case "remotes":
       return remoteDispatch(args);
+    case "browse":
+      return browseDispatch(args);
     case "raycast":
       return raycastDispatch(args);
+    case "project":
+      return projectDispatch(args);
     case "help":
     case "--help":
     case "-h":
@@ -1193,14 +1391,13 @@ const dispatch = async (args: Args): Promise<CommandOutput> => {
 };
 
 const main = async (argv: string[]): Promise<void> => {
-  const args = parseArgs(argv);
-  const json = args.output === "json";
-  if (json) setColor(false);
-  else if (args.color !== undefined) setColor(args.color);
-
   try {
+    const args = parseArgs(argv);
+    const json = args.output === "json";
+    if (json) setColor(false);
+    else if (args.color !== undefined) setColor(args.color);
     const result = await dispatch(args);
-    if (json) console.log(JSON.stringify(result.data ?? null, null, 2));
+    if (json) console.log(JSON.stringify(result.data ?? {}, undefined, 2));
     else if (result.text) console.log(result.text);
     if ((result.conflicts ?? 0) > 0) process.exitCode = 1;
   } catch (error) {
@@ -1209,4 +1406,4 @@ const main = async (argv: string[]): Promise<void> => {
   }
 };
 
-void main(process.argv.slice(2));
+main(process.argv.slice(2));

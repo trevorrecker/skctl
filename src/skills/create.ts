@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter.js";
+import { validateName } from "./names.js";
 import type { ParsedFrontmatter } from "./frontmatter.js";
 import type { SkillPaths } from "./paths.js";
 
@@ -17,14 +18,6 @@ export interface CommandFields {
   argumentHint?: string;
   body?: string;
 }
-
-const namePattern = /^[a-z0-9][a-z0-9-]*$/;
-
-export const validateName = (name: string): void => {
-  if (!namePattern.test(name)) {
-    throw new Error(`invalid name '${name}' — use kebab-case (a-z, 0-9, -), no leading dash`);
-  }
-};
 
 const skillDescriptionPlaceholder =
   "TODO one sentence on what this does, then the phrases a user types to trigger it";

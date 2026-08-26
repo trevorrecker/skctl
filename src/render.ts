@@ -17,7 +17,7 @@ import {
   yellow,
 } from "./ui.js";
 import type { DetailPair } from "./ui.js";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
 import type { DoctorEntry, DoctorReport } from "./skills/doctor.js";
 import type { RemoteInfo } from "./skills/remotes.js";
@@ -150,7 +150,7 @@ const destination = (group: ActionGroup): string => {
   const dirs = [
     ...new Set(
       relevant.map((action) =>
-        action.detail.startsWith("/") ? dirname(action.detail) : action.detail,
+        isAbsolute(action.detail) ? dirname(action.detail) : action.detail,
       ),
     ),
   ];
@@ -394,14 +394,48 @@ export const renderCommands = (commands: readonly CommandInfo[], scope: string):
   );
 };
 
+const clip = (text: string, width: number): string =>
+  text.length <= width ? text : `${text.slice(0, width - 1).trimEnd()}…`;
+
 const remoteState = (remote: RemoteInfo): string =>
   remote.cloned ? (remote.head === undefined ? "cloned" : `cloned@${remote.head}`) : "not cloned";
 
 export const unselectedSkills = (remote: RemoteInfo): string[] =>
-  remote.available.filter((name) => !remote.skills.includes(name));
+  remote.catalog.filter((entry) => !entry.selected).map((entry) => entry.selector);
 
 const selectionCount = (remote: RemoteInfo): string =>
-  `${remote.skills.length} of ${remote.cloned ? remote.available.length : "?"}`;
+  `${remote.skills.length} of ${remote.cloned ? remote.catalog.length : "?"}`;
+
+const groupCount = (remote: RemoteInfo): number =>
+  new Set(remote.catalog.map((entry) => entry.group?.path ?? "")).size;
+
+// A multi-plugin repository is the reason a selector can be path-qualified, so the tree groups
+// by plugin and prints the selector rather than the bare name.
+export const remoteCatalogLines = (remote: RemoteInfo): string[] => {
+  if (!remote.cloned) return [dim("unknown until cloned")];
+  if (remote.catalog.length === 0) return [dim(Marks.none)];
+  const groups = new Map<string, typeof remote.catalog>();
+  for (const entry of remote.catalog) {
+    const key = entry.group?.path ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups.entries()].flatMap(([path, entries]) => {
+    const group = entries[0].group;
+    const heading = group === undefined ? "" : `${group.name ?? path}`;
+    const description = group?.description;
+    return [
+      ...(heading === ""
+        ? []
+        : [description === undefined ? heading : `${heading}  ${dim(clip(description, 56))}`]),
+      ...entries.map(
+        (entry) =>
+          `  ${entry.selected ? green(Marks.on) : dim(Marks.off)} ${
+            entry.selected ? entry.selector : dim(entry.selector)
+          }`,
+      ),
+    ];
+  });
+};
 
 export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   if (remotes.length === 0) {
@@ -412,10 +446,11 @@ export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
     remote.alias,
     dim(remote.url),
     unselectedSkills(remote).length > 0 ? yellow(selectionCount(remote)) : selectionCount(remote),
+    groupCount(remote) > 1 ? dim(plural(groupCount(remote), "plugin")) : "",
     remote.cloned ? dim(remoteState(remote)) : yellow(remoteState(remote)),
   ]);
   const spare = remotes.reduce((total, remote) => total + unselectedSkills(remote).length, 0);
-  return report([title("remotes")], table(["", "ALIAS", "URL", "SKILLS", "STATE"], rows), [
+  return report([title("remotes")], table(["", "ALIAS", "URL", "SKILLS", "", "STATE"], rows), [
     joinDots([
       plural(remotes.length, "remote"),
       spare === 0 ? "" : yellow(`${spare} available, not selected`),
@@ -480,7 +515,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
   [
     "INSTALL SKILLS FROM A GIT REPOSITORY",
     [
-      ["skctl remote add <url>", "clone it, take every skill it ships, link them into each host"],
+      ["skctl remote add <url>", "clone it, select every skill it ships, and apply"],
       ["skctl describe remote <alias>", "review what it shipped and what you skipped"],
       ["skctl disable skill <name>", "stop using one of them"],
       ["", ""],
@@ -503,6 +538,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["remote add <url> [alias]", "clone a repository and select its skills"],
       ["remote remove <alias>", "drop a remote, its clone, and its selections"],
       ["remote list", "same view as `get remotes`"],
+      ["browse [alias|url]", "pick skills from a remote's tree, then apply"],
       ["pull [remote]", "fast-forward tracked remotes, then apply"],
     ],
   ],
@@ -522,10 +558,20 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["enable|disable skill|command|tag <name>", "toggle an entry, then apply"],
       ["tag|untag skill <name> <tag...>", "edit a skill's shared tags"],
       ["instruction list|add|remove [path]", "manage machine-local instruction targets"],
-      ["config [set root|raycast|refresh <value>]", "show or update configuration; raycast takes on, off, or a directory"],
+      ["config [set root|raycast|refresh <value>]", "show or update configuration; refresh also takes off"],
       ["refresh", "update root, remotes, and client targets"],
       ["schedule install [hours]|status|remove", "manage the background refresh job"],
       ["raycast sync [--dir <path>]", "regenerate the Raycast script commands and report"],
+    ],
+  ],
+  [
+    "PROJECT A SUBSET INTO A DIRECTORY",
+    [
+      ["project init --tags <a,b>", "select part of the global root for this directory"],
+      ["project init --skills <x,y>", "select by name instead of by tag"],
+      ["project", "reconcile the directory against its recorded selection"],
+      ["project status", "show what this directory takes and from where"],
+      ["project remove", "clear the projection and its config"],
     ],
   ],
 ];
@@ -546,19 +592,25 @@ export const renderUsage = (): string =>
     [
       title(
         "skctl",
-        dim("portable agent skills, commands, and instructions across Claude Code, Codex, and OpenCode"),
+        dim("portable agent skills, commands, and instructions across Claude Code, Codex, OpenCode, and Cursor"),
       ),
     ],
     usageLines(),
     flagGroup("GLOBAL FLAGS", [
       ["--root <dir>", "override the skills root"],
       ["--project[=DIR]", "operate on <DIR>/.agents"],
+      ["-h, --help", "show usage without running a command"],
+      ["-v, --version", "show the package version"],
       ["-o, --output <fmt>", "wide (default), name, json, body, raw"],
-      ["--dry-run", "plan without writing, on apply, import, and detach"],
+      ["--dry-run", "plan a supported write without changing files"],
       ["-q, --quiet", "print conflicts and the summary only"],
       ["--no-color", "disable color; NO_COLOR and FORCE_COLOR are honored"],
       ["--no-raycast", "skip the Raycast sync for this run"],
-      ["--skills <a,b>", "narrow what `remote add` selects"],
+      ["--paste", "filter `get skills` to paste-enabled entries"],
+      ["--skills <a,b>", "narrow what `remote add` or `project init` selects"],
+      ["--dir <path>", "select the project or Raycast target directory"],
+      ["--link, --copy", "how `project` materializes skills; link is the default"],
+      ["--force", "replace a source file or a remote alias URL"],
     ]),
     flagGroup("CREATE FLAGS", [
       ["-d, --description <text>", "frontmatter description"],
@@ -568,7 +620,6 @@ export const renderUsage = (): string =>
       ["--argument-hint <text>", "commands only"],
       ["--no-paste", "skip the paste flag, skills only"],
       ["--apply", "apply immediately after creating"],
-      ["--force", "overwrite an existing source file"],
     ]),
     [dim("Root resolution: --root > SKCTL_ROOT > ~/.config/skctl/config.json")],
   );

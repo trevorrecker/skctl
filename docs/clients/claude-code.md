@@ -36,15 +36,34 @@ a second source.
 
 ## Skill links
 
-For global roots, skctl creates this chain:
+Claude Code reads only its own directory, so it gets its own compiled copy:
 
 ```text
 ${CLAUDE_CONFIG_DIR:-~/.claude}/skills/<name>
-  -> ~/.agents/skills/<name>
-  -> <skills-root>/skills/<name>
+  -> <skills-root>/.build/claude/<name>
 ```
 
-Remote skills end at their selected directory under `<skills-root>/remotes/`.
+`.build/claude/<name>/SKILL.md` is compiled from `<skills-root>/skills/<name>/SKILL.md`, or
+from the skill's directory under `<skills-root>/remotes/` when a remote supplies it. Every
+other file in the skill directory links back to that source, so a bundled `scripts/` stays
+editable in one place and `${CLAUDE_SKILL_DIR}` resolves to a complete directory.
+
+## Frontmatter
+
+The `claude` surface keeps the widest set of keys, because Claude Code accepts its own
+extensions on top of the Agent Skills spec:
+
+```text
+name  description  license  compatibility  metadata  allowed-tools
+when_to_use  argument-hint  arguments  disallowed-tools  disable-model-invocation
+user-invocable  model  effort  context  agent  background  hooks  paths  shell
+```
+
+Anything else is dropped, and `skctl apply` says which keys it dropped. skctl's own
+`paste` and `tags` never reach a client.
+
+See [surfaces and overlays](../surfaces.md) for how a key or a block of content is shaped
+per client.
 
 ## References
 

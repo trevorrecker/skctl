@@ -1,16 +1,21 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { RaycastTarget, compileBody, planSurfaces, variantSurfaces } from "./compile.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { loadManifest, resolveEntry } from "./manifest.js";
+import { loadOverlays } from "./overlays.js";
 import { resolveRemoteSkills } from "./remotes.js";
 import { listCommandNames, listSkillNames } from "./sync.js";
-import type { Host, SkillsManifest } from "./types.js";
+import type { Host, SkillsManifest, Surface } from "./types.js";
 import type { SkillPaths } from "./paths.js";
 
 export interface SkillInfo {
   name: string;
   enabled: boolean;
   hosts: Host[];
+  surfaces: Surface[];
+  spill: Host[];
+  overlay?: string;
   tags: string[];
   paste: boolean;
   description: string;
@@ -76,10 +81,19 @@ export const skillInfo = (
   const resolved = resolveEntry(name, manifest.skills[name], manifest, activeTags);
   const path = skillMarkdownPath(paths, manifest, name);
   const data = readFrontmatter(path);
+  const overlay = loadOverlays(paths).overlays.get(name);
+  const source = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const { surfaces, spill } = planSurfaces(
+    resolved.hosts,
+    variantSurfaces(source, overlay),
+  );
   return {
     name,
     enabled: resolved.enabled,
     hosts: resolved.hosts,
+    surfaces,
+    spill,
+    overlay: overlay?.path,
     tags: resolved.tags,
     paste: data.paste === true,
     description: typeof data.description === "string" ? data.description : "",
@@ -114,7 +128,12 @@ export const skillContent = (
 ): string => {
   const path = skillMarkdownPath(paths, loadManifest(paths.manifestPath), name);
   if (!existsSync(path)) throw new Error(`unknown skill: ${name}`);
-  return readContent(path, raw);
+  if (raw) return readFileSync(path, "utf-8");
+  return compileBody(
+    readFileSync(path, "utf-8"),
+    RaycastTarget,
+    loadOverlays(paths).overlays.get(name),
+  );
 };
 
 export const commandInfo = (paths: SkillPaths, name: string): CommandInfo => {

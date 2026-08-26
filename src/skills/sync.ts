@@ -6,13 +6,17 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
+import { divergentBodies, planSkillBuild, pruneBuild, writeSkillBuild } from "./build.js";
 import { compileCommand, isGeneratedCommand } from "./commands.js";
-import { ensureSymlink, removeIfSymlink, symlinkTarget } from "./fsx.js";
+import { ensureSymlink, removeIfSymlink } from "./fsx.js";
 import { loadManifest, resolveEntry } from "./manifest.js";
+import { loadOverlays } from "./overlays.js";
 import { resolveRemoteSkills } from "./remotes.js";
 import { syncInstructions } from "./instructions.js";
-import type { Action, ResolvedEntry, SkillsManifest } from "./types.js";
+import { AllSurfaces } from "./types.js";
+import type { Action, ResolvedEntry, SkillsManifest, Surface } from "./types.js";
+import type { Overlay } from "./overlays.js";
 import type { SkillPaths } from "./paths.js";
 
 export interface SyncReport {
@@ -41,34 +45,52 @@ export const listCommandNames = (dir: string): string[] => {
     .sort();
 };
 
+// In project source scope the skills directory is both the source and the surface Codex
+// reads, so there is no build to write or link for it. A remote skill in the same scope
+// still lives elsewhere and gets the normal treatment.
+const surfaceHoldsSource = (
+  paths: SkillPaths,
+  surface: Surface,
+  sourceDir: string,
+): boolean => paths.surfaceDirs[surface] === dirname(sourceDir);
+
 const syncSkill = (
   paths: SkillPaths,
   resolved: ResolvedEntry,
+  sourceDir: string,
   dryRun: boolean,
-  sourceDir?: string,
+  overlay: Overlay | undefined,
+  built: Map<Surface, Set<string>>,
 ): Action[] => {
   const { name } = resolved;
-  const source = sourceDir ?? join(paths.sourceSkills, name);
-  const agentsLink = join(paths.agentsSkills, name);
-  const claudeLink = join(paths.claudeSkills, name);
-  // In project scope the source already lives in the agents dir, so there is no
-  // registry hop to create; the Claude link points straight at the source.
-  const linksAgents = paths.agentsSkills !== paths.sourceSkills;
-  const claudeTarget = linksAgents ? agentsLink : source;
-
   if (!resolved.enabled) {
-    const actions = [tag(name, removeIfSymlink(claudeLink, dryRun))];
-    if (linksAgents) actions.push(tag(name, removeIfSymlink(agentsLink, dryRun)));
-    return actions;
+    return AllSurfaces.filter((surface) => !surfaceHoldsSource(paths, surface, sourceDir)).map(
+      (surface) => tag(name, removeIfSymlink(join(paths.surfaceDirs[surface], name), dryRun)),
+    );
   }
 
-  const actions: Action[] = [];
-  if (linksAgents) actions.push(tag(name, ensureSymlink(agentsLink, source, dryRun)));
-  actions.push(
-    resolved.hosts.includes("claude")
-      ? tag(name, ensureSymlink(claudeLink, claudeTarget, dryRun))
-      : tag(name, removeIfSymlink(claudeLink, dryRun)),
+  const build = planSkillBuild(name, sourceDir, resolved.hosts, overlay);
+  const targets = build.surfaces.filter(
+    (surface) => !surfaceHoldsSource(paths, surface, sourceDir),
   );
+  const actions: Action[] = [
+    ...writeSkillBuild(paths.buildDir, { ...build, surfaces: targets }, sourceDir, dryRun).map(
+      (action) => tag(name, action),
+    ),
+    ...divergentBodies(build),
+  ];
+  for (const surface of AllSurfaces) {
+    if (surfaceHoldsSource(paths, surface, sourceDir)) continue;
+    const link = join(paths.surfaceDirs[surface], name);
+    if (targets.includes(surface)) {
+      built.set(surface, (built.get(surface) ?? new Set()).add(name));
+      actions.push(
+        tag(name, ensureSymlink(link, join(paths.buildDir, surface, name), dryRun)),
+      );
+    } else {
+      actions.push(tag(name, removeIfSymlink(link, dryRun)));
+    }
+  }
   return actions;
 };
 
@@ -146,31 +168,6 @@ const pruneOrphanCommands = (
   return actions;
 };
 
-const pruneStaleRemoteLinks = (
-  dir: string,
-  remotesDir: string,
-  active: Set<string>,
-  dryRun: boolean,
-): Action[] => {
-  if (!existsSync(dir)) return [];
-  const actions: Action[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isSymbolicLink() || active.has(entry.name)) continue;
-    const path = join(dir, entry.name);
-    const target = symlinkTarget(path);
-    if (target === undefined) continue;
-    if (!resolve(dirname(path), target).startsWith(remotesDir + sep)) continue;
-    if (!dryRun) rmSync(path);
-    actions.push({
-      kind: "removed",
-      detail: path,
-      subject: entry.name,
-      note: "remote skill unmasked",
-    });
-  }
-  return actions;
-};
-
 const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
   if (!existsSync(dir)) return [];
   const actions: Action[] = [];
@@ -189,6 +186,31 @@ const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
   return actions;
 };
 
+const buildIgnoreEntry = ".build/";
+
+export const ensureBuildIgnored = (paths: SkillPaths, dryRun: boolean): Action => {
+  const current = existsSync(paths.gitignorePath)
+    ? readFileSync(paths.gitignorePath, "utf-8")
+    : "";
+  if (current.split(/\r?\n/).some((line) => line.trim() === buildIgnoreEntry)) {
+    return { kind: "ok", subject: ".gitignore", detail: paths.gitignorePath };
+  }
+  const next = current === "" || current.endsWith("\n") ? current : `${current}\n`;
+  if (!dryRun) {
+    writeFileSync(
+      paths.gitignorePath,
+      `${next}\n# Compiled per-surface skills written by \`skctl apply\`\n${buildIgnoreEntry}\n`,
+      "utf-8",
+    );
+  }
+  return {
+    kind: current === "" ? "created" : "replaced",
+    subject: ".gitignore",
+    detail: paths.gitignorePath,
+    note: `ignored ${buildIgnoreEntry}`,
+  };
+};
+
 export const sync = (
   paths: SkillPaths,
   manifest: SkillsManifest = loadManifest(paths.manifestPath),
@@ -196,19 +218,34 @@ export const sync = (
   activeTags: readonly string[] = [],
 ): SyncReport => {
   const instructions = syncInstructions(paths, dryRun);
+  const { overlays, problems } = loadOverlays(paths);
+  const built = new Map<Surface, Set<string>>();
+  const skills: Action[] = [...problems, ensureBuildIgnored(paths, dryRun)];
+
   const localNames = listSkillNames(paths.sourceSkills);
-  const skills = localNames.flatMap((name) =>
-    syncSkill(
-      paths,
-      resolveEntry(name, manifest.skills[name], manifest, activeTags),
-      dryRun,
-    ),
-  );
+  for (const name of localNames) {
+    skills.push(
+      ...syncSkill(
+        paths,
+        resolveEntry(name, manifest.skills[name], manifest, activeTags),
+        join(paths.sourceSkills, name),
+        dryRun,
+        overlays.get(name),
+        built,
+      ),
+    );
+  }
 
   const remotes = resolveRemoteSkills(paths, manifest);
   skills.push(...remotes.problems);
   const localSet = new Set(localNames);
-  const activeRemote = new Set<string>();
+  // Two selected skills can share a directory name across plugins. Both resolve, but a client
+  // sees skills by name, so linking both would mean each apply overwrote the other. Report the
+  // pair and take neither.
+  const byName = new Map<string, typeof remotes.skills>();
+  for (const skill of remotes.skills) {
+    byName.set(skill.name, [...(byName.get(skill.name) ?? []), skill]);
+  }
   for (const skill of remotes.skills) {
     if (localSet.has(skill.name)) {
       skills.push({
@@ -218,22 +255,36 @@ export const sync = (
       });
       continue;
     }
-    activeRemote.add(skill.name);
+    const sharing = byName.get(skill.name) ?? [];
+    if (sharing.length > 1) {
+      if (sharing[0] === skill) {
+        skills.push({
+          kind: "conflict",
+          subject: skill.name,
+          detail: `${sharing.length} selected skills are named '${skill.name}'`,
+          note: `disable all but one of: ${sharing.map((entry) => entry.path).join(", ")}`,
+        });
+      }
+      continue;
+    }
     skills.push(
       ...syncSkill(
         paths,
         resolveEntry(skill.name, manifest.skills[skill.name], manifest, activeTags),
-        dryRun,
         skill.sourceDir,
+        dryRun,
+        overlays.get(skill.name),
+        built,
       ),
     );
   }
-  skills.push(
-    ...pruneStaleRemoteLinks(paths.agentsSkills, paths.remotesDir, activeRemote, dryRun),
-    ...pruneStaleRemoteLinks(paths.claudeSkills, paths.remotesDir, activeRemote, dryRun),
-  );
-  skills.push(...pruneBrokenLinks(paths.agentsSkills, dryRun));
-  skills.push(...pruneBrokenLinks(paths.claudeSkills, dryRun));
+
+  // Order matters: dropping a stale build first leaves its links dangling, and the broken
+  // link sweep then clears them, which covers a skill deleted from source outright.
+  skills.push(...pruneBuild(paths.buildDir, built, dryRun));
+  for (const surface of AllSurfaces) {
+    skills.push(...pruneBrokenLinks(paths.surfaceDirs[surface], dryRun));
+  }
 
   const commandNames = listCommandNames(paths.sourceCommands);
   const commands = commandNames.flatMap((name) =>

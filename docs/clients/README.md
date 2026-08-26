@@ -44,6 +44,11 @@ duplicate instruction input without creating those hierarchy files during apply.
 - [Claude Code](claude-code.md)
 - [Codex](codex.md)
 - [OpenCode](opencode.md)
+- [Cursor](cursor.md)
+
+Each page lists the directories and frontmatter keys for one client, and mirrors the module
+that encodes them under `src/providers/`. [Surfaces and overlays](../surfaces.md) covers how a
+skill is shaped for more than one at once.
 
 ## Link behavior
 

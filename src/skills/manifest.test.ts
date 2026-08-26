@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import {
   defaultManifest,
   loadManifest,
@@ -13,7 +13,7 @@ import {
 
 test("loadManifest returns defaults when the file is absent", () => {
   const manifest = loadManifest(join(tmpdir(), "does-not-exist.json"));
-  assert.deepEqual(manifest.defaultHosts, ["claude", "codex", "opencode"]);
+  assert.deepEqual(manifest.defaultHosts, ["claude", "codex", "opencode", "cursor"]);
   assert.deepEqual(manifest.skills, {});
 });
 
@@ -22,7 +22,7 @@ test("resolveEntry defaults to enabled with the manifest's default hosts", () =>
   assert.deepEqual(resolveEntry("a", undefined, manifest), {
     name: "a",
     enabled: true,
-    hosts: ["claude", "codex", "opencode"],
+    hosts: ["claude", "codex", "opencode", "cursor"],
     tags: [],
   });
   assert.equal(resolveEntry("b", { enabled: false }, manifest).enabled, false);
@@ -51,4 +51,16 @@ test("setEnabled and round-trip through disk preserve toggles", () => {
   const manifest = setEnabled(defaultManifest(), "skills", "grill-me", false);
   saveManifest(path, manifest);
   assert.equal(loadManifest(path).skills["grill-me"].enabled, false);
+});
+
+test("loadManifest preserves invalid remote aliases so operations can report them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "skctl-manifest-"));
+  const path = join(dir, "skills.config.json");
+  writeFileSync(path, JSON.stringify({
+    remotes: {
+      "../outside": { url: "https://example.test/repo.git", skills: [] },
+    },
+  }));
+
+  assert.deepEqual(Object.keys(loadManifest(path).remotes), ["../outside"]);
 });

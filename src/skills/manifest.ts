@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { AllHosts } from "./types.js";
+import { isRecord } from "../record.js";
 import type {
   Collection,
   Host,
@@ -10,7 +11,7 @@ import type {
 } from "./types.js";
 
 const isHost = (value: unknown): value is Host =>
-  typeof value === "string" && (AllHosts as readonly string[]).includes(value);
+  typeof value === "string" && AllHosts.some((host) => host === value);
 
 const parseHosts = (value: unknown): Host[] | undefined => {
   if (!Array.isArray(value)) return undefined;
@@ -25,8 +26,8 @@ const parseStrings = (value: unknown): string[] | undefined => {
 };
 
 const normalizeEntry = (value: unknown): ManifestEntry => {
-  if (typeof value !== "object" || value === null) return {};
-  const record = value as Record<string, unknown>;
+  if (!isRecord(value)) return {};
+  const record = value;
   const entry: ManifestEntry = {};
   if (typeof record.enabled === "boolean") entry.enabled = record.enabled;
   const hosts = parseHosts(record.hosts);
@@ -36,21 +37,21 @@ const normalizeEntry = (value: unknown): ManifestEntry => {
   return entry;
 };
 
-const normalizeEntries = (value: unknown): Record<string, ManifestEntry> => {
-  if (typeof value !== "object" || value === null) return {};
+const normalizeEntries = (value: unknown): SkillsManifest["skills"] => {
+  if (!isRecord(value)) return {};
   const out: Record<string, ManifestEntry> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, raw] of Object.entries(value)) {
     out[key] = normalizeEntry(raw);
   }
   return out;
 };
 
-const normalizeRemotes = (value: unknown): Record<string, RemoteEntry> => {
-  if (typeof value !== "object" || value === null) return {};
+const normalizeRemotes = (value: unknown): SkillsManifest["remotes"] => {
+  if (!isRecord(value)) return {};
   const out: Record<string, RemoteEntry> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const record = raw as Record<string, unknown>;
+  for (const [key, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) continue;
+    const record = raw;
     if (typeof record.url !== "string") continue;
     const skills = Array.isArray(record.skills)
       ? record.skills.filter((name): name is string => typeof name === "string")
@@ -69,14 +70,13 @@ export const defaultManifest = (): SkillsManifest => ({
 
 export const loadManifest = (manifestPath: string): SkillsManifest => {
   if (!existsSync(manifestPath)) return defaultManifest();
-  const parsed = JSON.parse(readFileSync(manifestPath, "utf-8")) as
-    | Partial<SkillsManifest>
-    | undefined;
+  const value: unknown = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  const parsed = isRecord(value) ? value : {};
   return {
-    defaultHosts: parseHosts(parsed?.defaultHosts) ?? [...AllHosts],
-    remotes: normalizeRemotes(parsed?.remotes),
-    skills: normalizeEntries(parsed?.skills),
-    commands: normalizeEntries(parsed?.commands),
+    defaultHosts: parseHosts(parsed.defaultHosts) ?? [...AllHosts],
+    remotes: normalizeRemotes(parsed.remotes),
+    skills: normalizeEntries(parsed.skills),
+    commands: normalizeEntries(parsed.commands),
   };
 };
 
@@ -84,7 +84,7 @@ export const saveManifest = (
   manifestPath: string,
   manifest: SkillsManifest,
 ): void => {
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`, "utf-8");
 };
 
 export const resolveEntry = (
