@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.11', '24', '26']
+        node: ['22.13', '24', '26']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.11'
+          node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm pack --json | jq -r '.[0].filename' > package-name
@@ -56,7 +56,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.11'
+          node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: npm pack --json > pack-result.json
+      - name: record package filename
+        run: node --input-type=module -e "import { appendFileSync, readFileSync } from 'node:fs'; const [{ filename }] = JSON.parse(readFileSync('pack-result.json', 'utf8')); appendFileSync(process.env.GITHUB_ENV, 'PACKAGE_FILE=' + filename + '\n');"
+      - run: npm install --global "./${{ env.PACKAGE_FILE }}"
+      - run: skctl --version

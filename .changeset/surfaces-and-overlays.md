@@ -46,3 +46,4 @@ repository that should carry the skills.
   reported before a command can write.
 - Package build and test scripts now run across operating systems, tests always rebuild first,
   and Raycast defaults off outside macOS.
+- Node.js 22.13 is now the oldest supported runtime. CI covers Node 22.13, 24, and 26.

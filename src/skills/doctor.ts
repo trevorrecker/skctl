@@ -41,7 +41,23 @@ const scanSurfaceLinks = (
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isSymbolicLink()) {
-      if (!existsSync(path)) report.issues.push({ label: "broken link", detail: path });
+      if (!existsSync(path)) {
+        report.issues.push({ label: "broken link", detail: path });
+        continue;
+      }
+      const target = symlinkTarget(path) ?? "";
+      const resolved = resolve(dirname(path), target);
+      const expected = join(paths.buildDir, surface, entry.name);
+      const managed = resolved === paths.buildDir || resolved.startsWith(paths.buildDir + sep);
+      if (resolved !== expected && (managed || surface === "claude")) {
+        report.issues.push({
+          label: "drift",
+          detail: path,
+          hint: `expected -> ${relative(dirname(path), expected)}`,
+        });
+      } else if (!managed) {
+        report.notes.push({ label: "unmanaged", detail: path, hint: `${surface} surface` });
+      }
     } else if (entry.isDirectory()) {
       if (surface === "claude") {
         report.issues.push({
@@ -70,7 +86,14 @@ const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
       const target = symlinkTarget(path) ?? "";
       const resolved = resolve(dirname(path), target);
       const managed = resolved === paths.buildDir || resolved.startsWith(paths.buildDir + sep);
-      if (!managed) {
+      const expected = join(paths.buildDir, "agents", entry.name);
+      if (managed && resolved !== expected) {
+        report.issues.push({
+          label: "drift",
+          detail: path,
+          hint: `expected -> ${relative(dirname(path), expected)}`,
+        });
+      } else if (!managed) {
         report.notes.push({ label: "legacy link", detail: entry.name, hint: `-> ${target}` });
       }
     } else if (entry.isDirectory() && vendored.has(entry.name)) {

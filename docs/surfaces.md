@@ -52,21 +52,20 @@ surfaces  claude, agents  also read by cursor
 
 ## The build directory
 
-Every skill compiles on every apply, into `<skills-root>/.build/<surface>/<name>/`:
+Every enabled skill compiles on each apply into
+`<skills-root>/.build/<surface>/<name>/`:
 
 - `SKILL.md` is written as a real file, compiled for that surface.
 - Every sibling (`scripts/`, `assets/`, `reference.md`) links back to source, so a bundled
   script stays editable in one place and `${CLAUDE_SKILL_DIR}` resolves to a complete
   directory.
-- Each host path is a single link into the build, replacing the two-hop chain through
-  `~/.agents/skills` that earlier versions created.
+- Each client path links directly to its compiled build.
 
 `.build/` is generated. `skctl apply` adds it to the skills root's `.gitignore`, and
 `skctl status` reports a root missing that entry. Editing a file under `.build/` accomplishes
 nothing; the next apply overwrites it.
 
-Compiling unconditionally is what strips skctl's own `paste` and `tags` keys, which earlier
-versions handed straight to every client.
+Compilation removes skctl's own `paste` and `tags` keys before a client reads the file.
 
 ## Shaping a skill you own
 

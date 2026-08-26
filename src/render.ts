@@ -11,6 +11,7 @@ import {
   padStart,
   red,
   report,
+  sanitizeTerminalText,
   shortPath,
   shorten,
   title,
@@ -146,7 +147,7 @@ const leadAction = (group: ActionGroup): Action =>
 // the set of directories, since the subject already names the file.
 const destination = (group: ActionGroup): string => {
   const relevant = group.actions.filter((action) => action.kind === group.kind);
-  if (relevant.length === 1) return shorten(relevant[0].detail);
+  if (relevant.length === 1) return sanitizeTerminalText(shorten(relevant[0].detail));
   const dirs = [
     ...new Set(
       relevant.map((action) =>
@@ -154,7 +155,7 @@ const destination = (group: ActionGroup): string => {
       ),
     ),
   ];
-  return shorten(dirs.join(", "));
+  return sanitizeTerminalText(shorten(dirs.join(", ")));
 };
 
 const tally = (groups: readonly ActionGroup[]): ActionTally => {
@@ -221,9 +222,9 @@ const changeLines = (
     return [
       kindColor[group.kind](kindMark[group.kind]),
       dim(section.name),
-      group.subject,
+      sanitizeTerminalText(group.subject),
       destination(group),
-      note === undefined ? "" : dim(shorten(note)),
+      note === undefined ? "" : dim(shorten(sanitizeTerminalText(note))),
     ];
   });
   return columns(dropEmptyColumns(rows));
@@ -421,8 +422,9 @@ export const remoteCatalogLines = (remote: RemoteInfo): string[] => {
   }
   return [...groups.entries()].flatMap(([path, entries]) => {
     const group = entries[0].group;
-    const heading = group === undefined ? "" : `${group.name ?? path}`;
-    const description = group?.description;
+    const heading = group === undefined ? "" : sanitizeTerminalText(group.name ?? path);
+    const description =
+      group?.description === undefined ? undefined : sanitizeTerminalText(group.description);
     return [
       ...(heading === ""
         ? []
@@ -430,7 +432,9 @@ export const remoteCatalogLines = (remote: RemoteInfo): string[] => {
       ...entries.map(
         (entry) =>
           `  ${entry.selected ? green(Marks.on) : dim(Marks.off)} ${
-            entry.selected ? entry.selector : dim(entry.selector)
+            entry.selected
+              ? sanitizeTerminalText(entry.selector)
+              : dim(sanitizeTerminalText(entry.selector))
           }`,
       ),
     ];
@@ -443,8 +447,8 @@ export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   }
   const rows = remotes.map((remote) => [
     remote.cloned ? green(Marks.on) : yellow(Marks.off),
-    remote.alias,
-    dim(remote.url),
+    sanitizeTerminalText(remote.alias),
+    dim(sanitizeTerminalText(remote.url)),
     unselectedSkills(remote).length > 0 ? yellow(selectionCount(remote)) : selectionCount(remote),
     groupCount(remote) > 1 ? dim(plural(groupCount(remote), "plugin")) : "",
     remote.cloned ? dim(remoteState(remote)) : yellow(remoteState(remote)),
@@ -466,9 +470,11 @@ export const renderRemoteAdded = (
 ): string[] => {
   const spare = available.filter((name) => !selected.includes(name));
   return [
-    `added remote '${alias}' with ${plural(selected.length, "skill")}`,
-    dim(`selected: ${selected.join(", ")}`),
-    ...(spare.length > 0 ? [dim(`not selected: ${spare.join(", ")}`)] : []),
+    `added remote '${sanitizeTerminalText(alias)}' with ${plural(selected.length, "skill")}`,
+    dim(`selected: ${selected.map(sanitizeTerminalText).join(", ")}`),
+    ...(spare.length > 0
+      ? [dim(`not selected: ${spare.map(sanitizeTerminalText).join(", ")}`)]
+      : []),
   ];
 };
 
@@ -502,7 +508,7 @@ export const renderDetails = (
 export const renderNotice = (lines: readonly string[]): string => report(lines);
 
 export const renderError = (message: string): string =>
-  `${red(Marks.fail)} ${message.split("\n").join("\n  ")}\n`;
+  `${red(Marks.fail)} ${message.split("\n").map(sanitizeTerminalText).join("\n  ")}\n`;
 
 const flagGroup = (heading: string, rows: ReadonlyArray<readonly [string, string]>): string[] => [
   dim(heading),

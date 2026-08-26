@@ -117,6 +117,27 @@ test("a codex guard resolves to the agents surface, the only user path codex rea
   assert.deepEqual(variantSurfaces(source), ["agents"]);
 });
 
+test("invalid host guards fail before compilation", () => {
+  const source = (body: string): string => `---\nname: demo\n---\n\n${body}\n`;
+
+  assert.throws(
+    () => compileSkill("demo", source("<!-- host:claude -->\nmissing close"), "claude"),
+    /missing a closing marker/,
+  );
+  assert.throws(
+    () => compileSkill(
+      "demo",
+      source("<!-- host:claude -->\n<!-- host:codex -->\nnested\n<!-- /host -->\n<!-- /host -->"),
+      "claude",
+    ),
+    /cannot be nested/,
+  );
+  assert.throws(
+    () => compileSkill("demo", source("<!-- host:private-client -->\nbody\n<!-- /host -->"), "claude"),
+    /unknown host guard target/,
+  );
+});
+
 test("overlay replacements run in declared order", () => {
   const overlay = overlayFrom("replace:\n  one: two\n  two: three\n");
   const compiled = compileSkill("demo", "---\nname: demo\n---\n\none\n", "agents", overlay);

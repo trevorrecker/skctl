@@ -7,9 +7,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { divergentBodies, planSkillBuild, pruneBuild, writeSkillBuild } from "./build.js";
-import { ensureSymlink, pathPresent, symlinkTarget } from "./fsx.js";
+import { ensureSymlink, isSymlink, pathPresent, symlinkTarget } from "./fsx.js";
 import { loadManifest } from "./manifest.js";
 import { loadOverlays } from "./overlays.js";
 import { ProjectConfigName } from "./paths.js";
@@ -49,30 +49,69 @@ interface CandidateCatalog {
   problems: Action[];
 }
 
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+const assertSafeProjectTarget = (target: ProjectTarget): void => {
+  const managedPaths = [
+    dirname(target.configPath),
+    target.configPath,
+    target.gitignorePath,
+    target.buildDir,
+    ...Object.values(target.surfaceDirs),
+  ];
+  for (const path of managedPaths) {
+    const fromRoot = relative(target.root, path);
+    if (
+      fromRoot === ".." ||
+      fromRoot.startsWith(`..${sep}`) ||
+      isAbsolute(fromRoot)
+    ) {
+      throw new Error(`project output path leaves ${target.root}: ${path}`);
+    }
+    let current = target.root;
+    for (const part of fromRoot.split(sep).filter(Boolean)) {
+      current = join(current, part);
+      if (pathPresent(current) && isSymlink(current)) {
+        throw new Error(`project output path contains a symlink: ${current}`);
+      }
+    }
+  }
+};
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
 
 export const loadProjectConfig = (target: ProjectTarget): ProjectConfig | undefined => {
+  assertSafeProjectTarget(target);
   if (!existsSync(target.configPath)) return undefined;
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(target.configPath, "utf-8"));
-    if (!isRecord(parsed) || typeof parsed.from !== "string") return undefined;
-    return {
-      from: parsed.from,
-      tags: strings(parsed.tags),
-      skills: strings(parsed.skills),
-      mode: parsed.mode === "copy" ? "copy" : "link",
-      written: Array.isArray(parsed.written) ? strings(parsed.written) : undefined,
-    };
+    parsed = JSON.parse(readFileSync(target.configPath, "utf-8"));
   } catch {
-    return undefined;
+    throw new Error(`cannot read project config: ${target.configPath}`);
   }
+  if (
+    !isRecord(parsed) ||
+    typeof parsed.from !== "string" ||
+    !isStringArray(parsed.tags) ||
+    !isStringArray(parsed.skills) ||
+    (parsed.mode !== "link" && parsed.mode !== "copy") ||
+    (parsed.written !== undefined && !isStringArray(parsed.written))
+  ) {
+    throw new Error(`invalid project config: ${target.configPath}`);
+  }
+  return {
+    from: parsed.from,
+    tags: parsed.tags,
+    skills: parsed.skills,
+    mode: parsed.mode,
+    written: parsed.written,
+  };
 };
 
 export const saveProjectConfig = (
   target: ProjectTarget,
   config: ProjectConfig,
 ): void => {
+  assertSafeProjectTarget(target);
   mkdirSync(dirname(target.configPath), { recursive: true });
   writeFileSync(target.configPath, `${JSON.stringify(config, undefined, 2)}\n`, "utf-8");
 };
@@ -251,6 +290,7 @@ export const reconcileProject = (
   config: ProjectConfig,
   dryRun: boolean,
 ): ProjectReport => {
+  assertSafeProjectTarget(target);
   const manifest = loadManifest(paths.manifestPath);
   const { overlays, problems } = loadOverlays(paths);
   const catalog = candidateCatalog(paths, manifest);
@@ -331,6 +371,7 @@ export const removeProject = (
   config: ProjectConfig,
   dryRun: boolean,
 ): Action[] => {
+  assertSafeProjectTarget(target);
   const actions =
     config.mode === "copy"
       ? pruneCopies(target, config.written ?? [], new Set(), dryRun)

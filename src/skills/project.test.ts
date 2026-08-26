@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -31,6 +32,7 @@ import type { Surface } from "./types.js";
 
 const projectModes: ProjectConfig["mode"][] = ["link", "copy"];
 const sharedSurfaces: Surface[] = ["claude", "agents"];
+const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
 
 const skill = (dir: string, name: string, body = "body"): void => {
   mkdirSync(join(dir, name), { recursive: true });
@@ -121,6 +123,115 @@ test("copy mode writes real directories, records them, and drops the staging bui
   assert.equal(existsSync(target.buildDir), false);
   assert.ok(report.config.written?.includes(".claude/skills/work-tool"));
   assert.ok(report.config.written?.includes(".agents/skills/work-tool"));
+});
+
+test("copy mode refuses bundled links that leave the skill directory", () => {
+  const paths = globalRoot();
+  const target = resolveProjectTarget(mkdtempSync(join(tmpdir(), "skctl-project-")));
+  const external = mkdtempSync(join(tmpdir(), "skctl-project-external-"));
+  writeFileSync(join(external, "secret.txt"), "outside\n");
+  symlinkSync(
+    external,
+    join(paths.sourceSkills, "work-tool", "assets"),
+    directoryLinkType,
+  );
+
+  const report = reconcileProject(
+    paths,
+    target,
+    config(paths.sourceRepo, { skills: ["work-tool"], mode: "copy" }),
+    false,
+  );
+
+  assert.ok(report.actions.some(
+    (action) =>
+      action.kind === "conflict" && action.note === "bundled link leaves the skill directory",
+  ));
+  assert.equal(
+    existsSync(join(target.surfaceDirs.claude, "work-tool", "assets", "secret.txt")),
+    false,
+  );
+});
+
+test("skill compilation refuses a SKILL.md link that leaves the skill directory", () => {
+  const paths = globalRoot();
+  const target = resolveProjectTarget(mkdtempSync(join(tmpdir(), "skctl-project-")));
+  const external = join(
+    mkdtempSync(join(tmpdir(), "skctl-project-external-")),
+    "SKILL.md",
+  );
+  writeFileSync(external, "---\nname: work-tool\n---\n\noutside\n");
+  const source = join(paths.sourceSkills, "work-tool", "SKILL.md");
+  rmSync(source);
+  symlinkSync(external, source);
+
+  assert.throws(
+    () => reconcileProject(
+      paths,
+      target,
+      config(paths.sourceRepo, { skills: ["work-tool"], mode: "copy" }),
+      false,
+    ),
+    /SKILL\.md: bundled link leaves the skill directory/,
+  );
+  assert.equal(existsSync(join(target.surfaceDirs.claude, "work-tool")), false);
+});
+
+test("project writes refuse symlinked output directories", () => {
+  const paths = globalRoot();
+  const projectRoot = mkdtempSync(join(tmpdir(), "skctl-project-"));
+  const target = resolveProjectTarget(projectRoot);
+  const external = mkdtempSync(join(tmpdir(), "skctl-project-output-"));
+  mkdirSync(dirname(target.surfaceDirs.agents), { recursive: true });
+  symlinkSync(external, target.surfaceDirs.agents, directoryLinkType);
+
+  assert.throws(
+    () => reconcileProject(
+      paths,
+      target,
+      config(paths.sourceRepo, { skills: ["work-tool"], mode: "copy" }),
+      false,
+    ),
+    /project output path contains a symlink/,
+  );
+  assert.throws(
+    () => saveProjectConfig(target, config(paths.sourceRepo)),
+    /project output path contains a symlink/,
+  );
+  assert.equal(existsSync(join(external, "work-tool")), false);
+});
+
+test("project writes refuse symlinked config and ignore files", () => {
+  const paths = globalRoot();
+  const external = mkdtempSync(join(tmpdir(), "skctl-project-files-"));
+
+  const configTarget = resolveProjectTarget(mkdtempSync(join(tmpdir(), "skctl-project-")));
+  const externalConfig = join(external, "config.json");
+  writeFileSync(externalConfig, "keep config\n");
+  mkdirSync(dirname(configTarget.configPath), { recursive: true });
+  symlinkSync(externalConfig, configTarget.configPath);
+
+  assert.throws(
+    () => saveProjectConfig(configTarget, config(paths.sourceRepo)),
+    /project output path contains a symlink/,
+  );
+  assert.equal(readFileSync(externalConfig, "utf-8"), "keep config\n");
+
+  const ignoreTarget = resolveProjectTarget(mkdtempSync(join(tmpdir(), "skctl-project-")));
+  const externalIgnore = join(external, "gitignore");
+  writeFileSync(externalIgnore, "keep ignore\n");
+  symlinkSync(externalIgnore, ignoreTarget.gitignorePath);
+
+  assert.throws(
+    () => reconcileProject(
+      paths,
+      ignoreTarget,
+      config(paths.sourceRepo, { skills: ["work-tool"] }),
+      false,
+    ),
+    /project output path contains a symlink/,
+  );
+  assert.equal(readFileSync(externalIgnore, "utf-8"), "keep ignore\n");
 });
 
 test("narrowing the selector prunes what it dropped, in either mode", () => {
@@ -380,10 +491,11 @@ test("the project config round trips through disk", () => {
   assert.deepEqual(loadProjectConfig(target), written);
 });
 
-test("a malformed project config reads as absent rather than throwing", () => {
+test("a malformed project config fails without replacing the file", () => {
   const target = resolveProjectTarget(mkdtempSync(join(tmpdir(), "skctl-project-")));
   mkdirSync(join(target.root, ".agents"), { recursive: true });
   writeFileSync(target.configPath, "{ not json");
 
-  assert.equal(loadProjectConfig(target), undefined);
+  assert.throws(() => loadProjectConfig(target), /cannot read project config/);
+  assert.equal(readFileSync(target.configPath, "utf-8"), "{ not json");
 });

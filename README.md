@@ -9,7 +9,7 @@ clients that will read it, and reconciles their user or project directories.
 
 ## Requirements and platform support
 
-- Node.js 22.11 or newer on a supported even-numbered release line.
+- Node.js 22.13 or newer on a supported even-numbered release line.
 - Git for remote repositories and `skctl refresh`.
 
 | Platform | Support |
@@ -20,7 +20,7 @@ clients that will read it, and reconciles their user or project directories.
 
 The CI workflow targets macOS, Linux, and Windows for the parser, compiler, tests,
 and package scripts. Native Windows still needs symlink permission for apply, project links,
-instructions, and skills that bundle files. WSL works when the agent harness and
+instructions, and skills that bundle files. WSL works when the client and
 skctl both use the same Linux home and config paths.
 
 ## Install
@@ -40,15 +40,17 @@ npx @trevorrecker/skctl --help
 ## Quick start
 
 ```bash
-skctl init ~/agent-skills
-skctl create skill code-review -d "Review a code change"
+skctl init ./agent-skills
+skctl create skill code-review -d "Review a code change" --body "Review the current change for bugs and report concrete findings." --hosts codex --no-paste
+skctl apply --dry-run
 skctl apply
 skctl status
 ```
 
 `init` creates the root and records it in the machine-local skctl config. `apply`
 compiles enabled content and updates the client paths. `status` checks drift without
-writing.
+writing. Replace `codex` with the client you use. `skctl describe skill code-review`
+shows every client that can read the compiled skill.
 
 The root can contain:
 
@@ -112,7 +114,7 @@ skctl detach skill wayfinder
 skctl remote remove pocock
 ```
 
-## Choose what is active
+## Disable content in the shared root
 
 Skills and commands start enabled. Direct toggles live in the shared manifest and
 apply immediately:
@@ -121,6 +123,11 @@ apply immediately:
 skctl disable skill code-review
 skctl enable skill code-review
 ```
+
+`disable skill` writes to `skills.config.json` and applies on this machine. Other
+machines remove the skill after they pull the shared root and apply.
+
+### Choose tags on this machine
 
 Tags provide a machine-local activation layer. Membership lives in the shared
 manifest; the active tag list lives in local config:
@@ -184,7 +191,7 @@ skctl instruction remove ~/.codex-work/AGENTS.md
 
 Import can adopt matching `~/AGENTS.md` or `~/CLAUDE.md` content. Apply links the
 tracked source into the configured user instruction paths and any additional
-machine-local targets. See [client paths](docs/clients/README.md) for each harness.
+machine-local targets. See [client paths](docs/clients/README.md) for each client.
 
 ## Project a subset
 
@@ -286,4 +293,4 @@ npm pack --dry-run
 ```
 
 `npm test` builds first and runs the Node test suite against the compiled package.
-CI covers Node 22.11, 24, and 26 on Linux and Node 22.11 on macOS and Windows.
+CI covers Node 22.13, 24, and 26 on Linux and Node 24 on macOS and Windows.

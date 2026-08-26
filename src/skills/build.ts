@@ -1,14 +1,16 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { compileSkill, planSurfaces, variantSurfaces } from "./compile.js";
-import { ensureSymlink } from "./fsx.js";
+import { ensureSymlink, pathPresent } from "./fsx.js";
 import { readersOf } from "../providers/index.js";
 import { AllSurfaces } from "./types.js";
 import type { Action, Host, Surface } from "./types.js";
@@ -22,7 +24,42 @@ export interface SkillBuild {
   compiled: Map<Surface, CompiledSkill>;
 }
 
-export const skillFile = "SKILL.md";
+const skillFile = "SKILL.md";
+
+const isWithin = (root: string, path: string): boolean => {
+  const fromRoot = relative(root, path);
+  return (
+    fromRoot === "" ||
+    (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))
+  );
+};
+
+const bundledFileProblem = (sourceDir: string, entryPath: string): string | undefined => {
+  try {
+    const sourceRoot = realpathSync(sourceDir);
+    const visited = new Set<string>();
+    const inspect = (path: string): string | undefined => {
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) {
+        const target = realpathSync(path);
+        if (!isWithin(sourceRoot, target)) return "bundled link leaves the skill directory";
+        return inspect(target);
+      }
+      if (!stat.isDirectory()) return undefined;
+      const realPath = realpathSync(path);
+      if (visited.has(realPath)) return undefined;
+      visited.add(realPath);
+      for (const entry of readdirSync(path)) {
+        const problem = inspect(join(path, entry));
+        if (problem !== undefined) return problem;
+      }
+      return undefined;
+    };
+    return inspect(entryPath);
+  } catch {
+    return "bundled link is dangling or unreadable";
+  }
+};
 
 export const planSkillBuild = (
   name: string,
@@ -30,7 +67,10 @@ export const planSkillBuild = (
   hosts: readonly Host[],
   overlay?: Overlay,
 ): SkillBuild => {
-  const source = readFileSync(join(sourceDir, skillFile), "utf-8");
+  const sourcePath = join(sourceDir, skillFile);
+  const problem = bundledFileProblem(sourceDir, sourcePath);
+  if (problem !== undefined) throw new Error(`${sourcePath}: ${problem}`);
+  const source = readFileSync(sourcePath, "utf-8");
   const { surfaces, spill } = planSurfaces(hosts, variantSurfaces(source, overlay));
   return {
     name,
@@ -59,11 +99,24 @@ const mirrorSiblings = (
   dryRun: boolean,
 ): Action[] => {
   const siblings = readdirSync(sourceDir).filter((entry) => entry !== skillFile);
-  const actions = siblings.map((entry) =>
-    ensureSymlink(join(buildSkillDir, entry), join(sourceDir, entry), dryRun),
-  );
+  const actions: Action[] = [];
+  const mirrored: string[] = [];
+  for (const entry of siblings) {
+    const source = join(sourceDir, entry);
+    const destination = join(buildSkillDir, entry);
+    const problem = bundledFileProblem(sourceDir, source);
+    if (problem === undefined) {
+      actions.push(ensureSymlink(destination, source, dryRun));
+      mirrored.push(entry);
+      continue;
+    }
+    if (!dryRun && pathPresent(destination)) {
+      rmSync(destination, { recursive: true, force: true });
+    }
+    actions.push({ kind: "conflict", detail: source, note: problem });
+  }
   if (!existsSync(buildSkillDir)) return actions;
-  const keep = new Set([skillFile, ...siblings]);
+  const keep = new Set([skillFile, ...mirrored]);
   for (const entry of readdirSync(buildSkillDir)) {
     if (keep.has(entry)) continue;
     if (!dryRun) rmSync(join(buildSkillDir, entry), { recursive: true, force: true });

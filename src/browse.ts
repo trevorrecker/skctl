@@ -17,6 +17,7 @@ import {
   dim,
   green,
   joinDots,
+  sanitizeTerminalText,
   shortPath,
   title,
   yellow,
@@ -337,8 +338,8 @@ const clip = (text: string, limit: number): string =>
 
 const treeCell = (row: BrowseRow): string =>
   row.kind === "group"
-    ? `${row.collapsed ? Marks.foldClosed : Marks.foldOpen} ${row.label}`
-    : `${" ".repeat(row.depth * 2 + 2)}${row.label}`;
+    ? `${row.collapsed ? Marks.foldClosed : Marks.foldOpen} ${sanitizeTerminalText(row.label)}`
+    : `${" ".repeat(row.depth * 2 + 2)}${sanitizeTerminalText(row.label)}`;
 
 interface Viewport {
   rows: number;
@@ -358,7 +359,7 @@ const treeHints = [
 const treeHeading = (state: BrowseState, label: string): string =>
   title(
     "browse",
-    dim(label),
+    dim(sanitizeTerminalText(label)),
     dim(`${state.selected.size} of ${state.entries.length} selected`),
     state.filter === "" && state.mode !== "filter"
       ? undefined
@@ -377,7 +378,7 @@ const treeFrame = (state: BrowseState, label: string, view: Viewport): string[] 
         active ? bold(Marks.arrow) : " ",
         markOf(row.state),
         active ? bold(treeCell(row)) : treeCell(row),
-        row.detail === undefined ? "" : dim(clip(row.detail, 44)),
+        row.detail === undefined ? "" : dim(clip(sanitizeTerminalText(row.detail), 44)),
       ];
     }),
     1,
@@ -395,13 +396,20 @@ const reviewFrame = (state: BrowseState, label: string): string[] => {
   const selection = browseSelection(state);
   const changes = columns(
     [
-      ...selection.added.map((selector) => [green(Marks.added), selector]),
-      ...selection.removed.map((selector) => [yellow(Marks.removed), selector]),
+      ...selection.added.map((selector) => [green(Marks.added), sanitizeTerminalText(selector)]),
+      ...selection.removed.map((selector) => [
+        yellow(Marks.removed),
+        sanitizeTerminalText(selector),
+      ]),
     ],
     1,
   );
   return [
-    title("review", dim(label), dim(`${selection.selectors.length} selected`)),
+    title(
+      "review",
+      dim(sanitizeTerminalText(label)),
+      dim(`${selection.selectors.length} selected`),
+    ),
     "",
     ...(changes.length === 0 ? [dim("no changes")] : changes),
     "",
@@ -411,9 +419,11 @@ const reviewFrame = (state: BrowseState, label: string): string[] => {
 
 const peekFrame = (label: string, body: string, view: Viewport): string[] => {
   const room = Math.max(1, view.rows - 5);
-  const lines = body.split("\n").map((line) => clip(line, view.columns - 1));
+  const lines = body
+    .split("\n")
+    .map((line) => clip(sanitizeTerminalText(line), view.columns - 1));
   return [
-    title("peek", dim(label)),
+    title("peek", dim(sanitizeTerminalText(label))),
     "",
     ...lines.slice(0, room),
     ...(lines.length > room ? [dim(`… ${lines.length - room} more lines`)] : []),
@@ -449,8 +459,10 @@ const choiceFrame = (state: ChoiceState): string[] => [
   ...columns(
     state.choices.map((remote, index) => [
       index === state.cursor ? bold(Marks.arrow) : " ",
-      index === state.cursor ? bold(remote.alias) : remote.alias,
-      dim(remote.url),
+      index === state.cursor
+        ? bold(sanitizeTerminalText(remote.alias))
+        : sanitizeTerminalText(remote.alias),
+      dim(sanitizeTerminalText(remote.url)),
       remote.cloned
         ? dim(`${remote.skills.length} of ${remote.catalog.length}`)
         : yellow("not cloned"),
@@ -686,7 +698,7 @@ const remoteInfo = (
 
 const catalogText = (info: RemoteInfo): string =>
   renderDetails("browse", info.alias, [
-    ["url", info.url],
+    ["url", sanitizeTerminalText(info.url)],
     ["selected", `${info.skills.length} of ${info.catalog.length}`],
     ["skills", remoteCatalogLines(info)],
   ]);
@@ -699,8 +711,12 @@ const commitNotices = (
   target.discard
     ? `added remote '${target.alias}' with ${selection.selectors.length} of ${total} skills`
     : `selected ${selection.selectors.length} of ${total} skills from '${target.alias}'`,
-  ...(selection.added.length > 0 ? [dim(`added: ${selection.added.join(", ")}`)] : []),
-  ...(selection.removed.length > 0 ? [dim(`removed: ${selection.removed.join(", ")}`)] : []),
+  ...(selection.added.length > 0
+    ? [dim(`added: ${selection.added.map(sanitizeTerminalText).join(", ")}`)]
+    : []),
+  ...(selection.removed.length > 0
+    ? [dim(`removed: ${selection.removed.map(sanitizeTerminalText).join(", ")}`)]
+    : []),
 ];
 
 export const browse = async (
@@ -721,41 +737,40 @@ export const browse = async (
   const target = await resolveTarget(paths, manifest, options);
   if (target === undefined) return { text: renderNotice(["no changes"]), data: undefined };
 
-  const drop = (): void => {
-    if (target.discard) rmSync(target.clonePath, { recursive: true, force: true });
-  };
-  const catalog = discoverRemoteCatalog(
-    target.clonePath,
-    manifest.remotes[target.alias]?.skills ?? [],
-  );
-  if (catalog.length === 0) {
-    drop();
-    throw new Error(`no SKILL.md found in ${target.url}`);
-  }
-  const info = remoteInfo(target, catalog, manifest);
-  if (!options.interactive) {
-    drop();
-    return { text: catalogText(info), data: info };
-  }
+  let keepClone = false;
+  try {
+    const catalog = discoverRemoteCatalog(
+      target.clonePath,
+      manifest.remotes[target.alias]?.skills ?? [],
+    );
+    if (catalog.length === 0) throw new Error(`no SKILL.md found in ${target.url}`);
+    const info = remoteInfo(target, catalog, manifest);
+    if (!options.interactive) return { text: catalogText(info), data: info };
 
-  const label = `${target.alias}  ${shortPath(target.url)}`;
-  const final = await runPicker(browseState(catalog), label, target.clonePath);
-  if (final.exit !== "commit") {
-    drop();
-    return { text: renderNotice([`browse '${target.alias}': no changes`]), data: info };
+    const label = `${target.alias}  ${shortPath(target.url)}`;
+    const final = await runPicker(browseState(catalog), label, target.clonePath);
+    if (final.exit !== "commit") {
+      return { text: renderNotice([`browse '${target.alias}': no changes`]), data: info };
+    }
+    const selection = browseSelection(final);
+    const result: BrowseResult = {
+      text: "",
+      data: { ...info, skills: selection.selectors, ...selection },
+      manifest: pruneSkillEntries(paths, {
+        ...manifest,
+        remotes: {
+          ...manifest.remotes,
+          [target.alias]: { url: target.url, skills: selection.selectors },
+        },
+      }, selection.removed),
+      actions: [target.action],
+      notices: commitNotices(target, selection, catalog.length),
+    };
+    keepClone = true;
+    return result;
+  } finally {
+    if (target.discard && !keepClone) {
+      rmSync(target.clonePath, { recursive: true, force: true });
+    }
   }
-  const selection = browseSelection(final);
-  return {
-    text: "",
-    data: { ...info, skills: selection.selectors, ...selection },
-    manifest: pruneSkillEntries(paths, {
-      ...manifest,
-      remotes: {
-        ...manifest.remotes,
-        [target.alias]: { url: target.url, skills: selection.selectors },
-      },
-    }, selection.removed),
-    actions: [target.action],
-    notices: commitNotices(target, selection, catalog.length),
-  };
 };

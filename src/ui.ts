@@ -2,6 +2,10 @@ import { homedir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
 
 const ansiPattern = /\u001B\[[0-9;]*m/g;
+const terminalControlPattern = /[\u0000-\u001F\u007F-\u009F]/g;
+
+export const sanitizeTerminalText = (text: string): string =>
+  text.replace(terminalControlPattern, "");
 
 const detectColor = (): boolean => {
   if (process.env.NO_COLOR) return false;

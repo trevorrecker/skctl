@@ -70,6 +70,28 @@ test("notices lead the report and reach the json payload", () => {
   assert.deepEqual(data.summary, { inSync: 1, changed: 1, conflicts: 1 });
 });
 
+test("apply output removes terminal controls from action fields", () => {
+  const unsafe: ApplyResult = {
+    ...result(),
+    sections: [
+      {
+        name: "remotes",
+        actions: [
+          {
+            kind: "created",
+            subject: "plugin\u001B]52;c;subject\u0007",
+            detail: "cloned https://example.test/\u001B]52;c;detail\u0007",
+            note: "selected\u001B]52;c;note\u0007",
+          },
+        ],
+      },
+    ],
+  };
+
+  const text = renderApply(unsafe);
+  assert.doesNotMatch(text, /\u001B|\u0007/);
+});
+
 test("status separates issues from notes and names the totals", () => {
   const report: DoctorReport = {
     sourceSkillCount: 3,
