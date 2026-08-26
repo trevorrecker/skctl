@@ -1,21 +1,26 @@
 version: 2
+
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
-      dev-dependencies:
-        dependency-type: development
+      security-updates:
+        applies-to: security-updates
+        patterns: ['*']
     commit-message:
-      prefix: 'chore'
+      prefix: 'fix'
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
-      actions:
+      security-updates:
+        applies-to: security-updates
         patterns: ['*']
     commit-message:
-      prefix: 'chore'
+      prefix: 'fix'
