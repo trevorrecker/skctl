@@ -3,9 +3,32 @@
 [![CI](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml/badge.svg)](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@trevorrecker/skctl)](https://www.npmjs.com/package/@trevorrecker/skctl)
 
-`skctl` manages agent skills, commands, and shared instructions across Claude Code,
-Codex, OpenCode, and Cursor. It keeps one source root, compiles each skill for the
-clients that will read it, and reconciles their user or project directories.
+`skctl` turns an ordinary directory into a personal library of agent skills,
+commands, and shared instructions.
+
+Keep skills you write alongside skills selected from Git repositories in one root.
+skctl compiles the format each client expects, then applies the enabled set to
+Claude Code, Codex, OpenCode, and Cursor or projects a smaller set into one
+repository.
+
+Put the root in Git. Git records changes to the source and catalog, and you can
+clone the same library onto another machine. The source stays in your library even
+when you disable a skill, activate it only through a tag, or leave it out of a
+project.
+
+## One library, different working sets
+
+Your library can hold more than any one setup needs:
+
+- Add skills you own or select one, several, or every skill from a remote repository.
+- Disable a skill without deleting its source or remote selection.
+- Tag skills by context, then choose the active tags on each machine.
+- Link or copy a named or tagged subset into an individual project.
+- Keep small client differences in host sections and local overlays instead of forks.
+
+The shared root records source, remote selections, tag membership, and explicit
+disables. Machine-local config records where the root lives and which tags are
+active. Each machine and project can use a different set from the same catalog.
 
 ## Requirements and platform support
 
@@ -40,7 +63,7 @@ npx @trevorrecker/skctl --help
 ## Quick start
 
 ```bash
-skctl init ./agent-skills
+skctl init ~/dev/skills
 skctl create skill code-review -d "Review a code change" --body "Review the current change for bugs and report concrete findings." --hosts codex --no-paste
 skctl apply --dry-run
 skctl apply
@@ -55,20 +78,56 @@ shows every client that can read the compiled skill.
 The root can contain:
 
 ```text
-commands/
-instructions/
-  AGENTS.md
-overlays/
-remotes/
-skills/
-skills.config.json
-.build/             generated and ignored by Git
+~/dev/skills/
+├── commands/
+├── instructions/
+│   └── AGENTS.md
+├── overlays/
+├── remotes/          fetched and ignored by Git
+├── skills/
+├── skills.config.json
+└── .build/           generated and ignored by Git
 ```
 
 Root resolution follows `--root`, then `SKCTL_ROOT`, then the root in
 `${XDG_CONFIG_HOME:-~/.config}/skctl/config.json`.
 
-## Bring in existing skills
+## Keep the library in Git
+
+After the first apply, initialize the root as a Git repository:
+
+```bash
+git -C ~/dev/skills init -b main
+git -C ~/dev/skills add .
+git -C ~/dev/skills commit -m "chore: start skill library"
+git -C ~/dev/skills remote add origin <repository-url>
+git -C ~/dev/skills push -u origin main
+```
+
+Commit `skills/`, `commands/`, `instructions/`, `overlays/`, and
+`skills.config.json`. skctl rebuilds `.build/` and remote clones, so both stay out
+of version control. The upstream repository can be private or public.
+
+On another machine:
+
+```bash
+git clone <repository-url> ~/dev/skills
+skctl init ~/dev/skills
+skctl pull
+```
+
+`init` records the cloned root in machine-local config. `pull` fetches the remote
+catalogs recorded in `skills.config.json` and applies the library to that machine.
+
+If an older Git root already tracks `remotes/`, remove the cached clones once after
+upgrading:
+
+```bash
+git -C ~/dev/skills rm -r --cached remotes
+git -C ~/dev/skills commit -m "chore: stop tracking remote clones"
+```
+
+## Build your catalog
 
 Adopt loose skill directories already under `~/.agents/skills`:
 
@@ -77,7 +136,8 @@ skctl import --dry-run
 skctl import
 ```
 
-Install skills from any Git repository that contains directories with a `SKILL.md`:
+Install every skill from a Git repository, or narrow the selection with
+`--skills one,two`:
 
 ```bash
 skctl remote add https://github.com/owner/skills example
@@ -107,6 +167,13 @@ Remote clones live under `remotes/<alias>`. `pull` fast-forwards them and applie
 the result. `detach` copies one selected remote skill into local source and removes
 its remote selection.
 
+Keep local changes to remote skills in `overlays/<skill>.md`. An overlay can add
+or remove frontmatter and run ordered find-and-replace rules across the skill body.
+Each change can apply to every compiled copy or one client-specific copy. The
+overlay stays outside the clone, so `pull` can refresh the upstream source without
+losing your adaptation. Use `detach` when you want to stop following upstream and
+own the full source instead.
+
 ```bash
 skctl pull
 skctl pull pocock
@@ -114,7 +181,7 @@ skctl detach skill wayfinder
 skctl remote remove pocock
 ```
 
-## Disable content in the shared root
+## Keep skills without loading them
 
 Skills and commands start enabled. Direct toggles live in the shared manifest and
 apply immediately:
