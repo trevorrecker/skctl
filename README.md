@@ -3,13 +3,13 @@
 [![CI](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml/badge.svg)](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@trevorrecker/skctl)](https://www.npmjs.com/package/@trevorrecker/skctl)
 
-`skctl` turns an ordinary directory into a personal library of agent skills,
-commands, and shared instructions.
+`skctl` keeps your agent skills in one catalog and controls where each skill
+appears.
 
-Keep skills you write alongside skills selected from Git repositories in one root.
-skctl compiles the format each client expects, then applies the enabled set to
-Claude Code, Codex, OpenCode, and Cursor or projects a smaller set into one
-repository.
+Store skills you write alongside skills selected from Git repositories. Add shared
+commands and instructions in the same root. skctl compiles the format each client
+expects, then applies the enabled set to Claude Code, Codex, OpenCode, and Cursor
+or projects a smaller set into one repository.
 
 Put the root in Git. Git records changes to the source and catalog, and you can
 clone the same library onto another machine. The source stays in your library even
