@@ -55,7 +55,6 @@ export interface ApplySectionData {
   name: string;
   note?: string;
   counts: ActionTally;
-  links: number;
   actions: Action[];
 }
 
@@ -141,16 +140,18 @@ const groupActions = (actions: readonly Action[]): ActionGroup[] => {
 const leadAction = (group: ActionGroup): Action =>
   group.actions.find((action) => action.kind === group.kind) ?? group.actions[0];
 
-// Only the operations matching the group's kind are worth naming: when a skill links
-// cleanly into one directory and collides in another, the row should point at the
-// collision. A single operation is clearest as its full path; several are clearest as
-// the set of directories, since the subject already names the file.
+// Rows name the destinations a reader acts on: the client directories, not the internal
+// .build/ copies every skill also links through. A single destination reads clearest as
+// its full path; several read clearest as the set of directories, since the subject
+// already names the file. Fall back to the build paths only when nothing else remains.
 const destination = (group: ActionGroup): string => {
   const relevant = group.actions.filter((action) => action.kind === group.kind);
-  if (relevant.length === 1) return sanitizeTerminalText(shorten(relevant[0].detail));
+  const named = relevant.filter((action) => !action.detail.includes("/.build/"));
+  const shown = named.length > 0 ? named : relevant;
+  if (shown.length === 1) return sanitizeTerminalText(shorten(shown[0].detail));
   const dirs = [
     ...new Set(
-      relevant.map((action) =>
+      shown.map((action) =>
         isAbsolute(action.detail) ? dirname(action.detail) : action.detail,
       ),
     ),
@@ -196,18 +197,15 @@ const countsTable = (sections: readonly ReportSection[]): string[] => {
   );
   const rows = sections.map((section, index) => {
     const counts = tallies[index] ?? {};
-    const groups = grouped[index] ?? [];
     const cells = kindOrder
       .filter((kind) => (counts[kind] ?? 0) > 0)
       .map((kind) => {
         const number = padStart(String(counts[kind]), digits);
         return kind === "ok" ? `${number} ${dim(kind)}` : kindColor[kind](`${number} ${kind}`);
       });
-    const links = section.actions.length;
     return [
       section.name,
       ...(cells.length > 0 ? cells : [dim(Marks.none)]),
-      links === groups.length ? "" : dim(`${links} links`),
       section.note === undefined ? "" : dim(section.note),
     ];
   });
@@ -281,7 +279,6 @@ export const applyData = (
       name: section.name,
       note: section.note,
       counts: tally(groupActions(section.actions)),
-      links: section.actions.length,
       actions: section.actions,
     })),
     summary: {
@@ -463,6 +460,13 @@ export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   ]);
 };
 
+// A long tail of names buries the line. Past five, keep the first four and tally the
+// rest so the reader sees what they skipped without scrolling a wall of skills.
+const collapseNames = (names: readonly string[]): string =>
+  names.length > 5
+    ? `${names.slice(0, 4).join(", ")}, and ${names.length - 4} more`
+    : names.join(", ");
+
 export const renderRemoteAdded = (
   alias: string,
   available: readonly string[],
@@ -473,7 +477,7 @@ export const renderRemoteAdded = (
     `added remote '${sanitizeTerminalText(alias)}' with ${plural(selected.length, "skill")}`,
     dim(`selected: ${selected.map(sanitizeTerminalText).join(", ")}`),
     ...(spare.length > 0
-      ? [dim(`not selected: ${spare.map(sanitizeTerminalText).join(", ")}`)]
+      ? [dim(`not selected: ${collapseNames(spare.map(sanitizeTerminalText))}`)]
       : []),
   ];
 };

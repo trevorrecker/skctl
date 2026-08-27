@@ -188,31 +188,20 @@ const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
 
 export const GeneratedIgnoreEntries = [".build/", "remotes/"] as const;
 
-export const ensureGeneratedIgnored = (paths: SkillPaths, dryRun: boolean): Action => {
+// Internal housekeeping, not a reported change: keep generated builds and remote clones
+// out of a git-tracked root without listing a .gitignore edit among the user's skills.
+export const ensureGeneratedIgnored = (paths: SkillPaths, dryRun: boolean): void => {
+  if (dryRun) return;
   const current = existsSync(paths.gitignorePath)
     ? readFileSync(paths.gitignorePath, "utf-8")
     : "";
   const currentEntries = new Set(current.split(/\r?\n/).map((line) => line.trim()));
   const missingEntries = GeneratedIgnoreEntries.filter((entry) => !currentEntries.has(entry));
-  if (missingEntries.length === 0) {
-    return { kind: "ok", subject: ".gitignore", detail: paths.gitignorePath };
-  }
+  if (missingEntries.length === 0) return;
   const next = current === "" || current.endsWith("\n") ? current : `${current}\n`;
-  if (!dryRun) {
-    const separator = current === "" ? "" : "\n";
-    const generated = `# Generated builds and remote clones managed by \`skctl\`\n${missingEntries.join("\n")}\n`;
-    writeFileSync(
-      paths.gitignorePath,
-      `${next}${separator}${generated}`,
-      "utf-8",
-    );
-  }
-  return {
-    kind: current === "" ? "created" : "replaced",
-    subject: ".gitignore",
-    detail: paths.gitignorePath,
-    note: `ignored ${missingEntries.join(", ")}`,
-  };
+  const separator = current === "" ? "" : "\n";
+  const generated = `# Generated builds and remote clones managed by \`skctl\`\n${missingEntries.join("\n")}\n`;
+  writeFileSync(paths.gitignorePath, `${next}${separator}${generated}`, "utf-8");
 };
 
 export const sync = (
@@ -224,7 +213,8 @@ export const sync = (
   const instructions = syncInstructions(paths, dryRun);
   const { overlays, problems } = loadOverlays(paths);
   const built = new Map<Surface, Set<string>>();
-  const skills: Action[] = [...problems, ensureGeneratedIgnored(paths, dryRun)];
+  ensureGeneratedIgnored(paths, dryRun);
+  const skills: Action[] = [...problems];
 
   const localNames = listSkillNames(paths.sourceSkills);
   for (const name of localNames) {

@@ -280,6 +280,21 @@ test("apply creates the root ignore file without a leading blank line", () => {
   assert.doesNotMatch(readFileSync(paths.gitignorePath, "utf-8"), /^\n/);
 });
 
+test("the root ignore file is written but never reported as a skill change", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-sync-"));
+  seedRepo(home);
+  const paths = resolveSkillPaths(home);
+
+  const report = sync(paths, defaultManifest(), false);
+
+  assert.ok(existsSync(paths.gitignorePath));
+  assert.match(readFileSync(paths.gitignorePath, "utf-8"), /^\.build\/$/m);
+  assert.equal(
+    report.skills.filter((action) => action.subject === ".gitignore").length,
+    0,
+  );
+});
+
 test("tagged skills materialize only when one of their tags is active", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-sync-"));
   seedRepo(home);

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyData, conflictCount, renderApply, renderStatus } from "./render.js";
+import {
+  applyData,
+  conflictCount,
+  renderApply,
+  renderRemoteAdded,
+  renderStatus,
+} from "./render.js";
 import { setColor } from "./ui.js";
 import type { ApplyResult } from "./render.js";
 import type { DoctorReport } from "./skills/doctor.js";
@@ -133,35 +139,38 @@ const fanOut = (): ApplyResult => ({
   ],
 });
 
-test("counts name the things that moved, not the links that moved them", () => {
+test("counts name each kind of change without a link tally", () => {
   const text = renderApply(fanOut());
-  assert.match(text, /instructions {3}1 ok {3}3 links/);
-  assert.match(text, /skills {9}1 ok {3}1 created {3}4 links/);
+  assert.match(text, /instructions {3}1 ok/);
+  assert.match(text, /skills {9}1 ok {3}1 created/);
   assert.match(text, /✔ 1 change · 2 in sync/);
+  assert.doesNotMatch(text, /links/);
+});
+
+test("the change-log row names client directories, not the internal .build/ copies", () => {
+  const withBuild: ApplyResult = {
+    ...fanOut(),
+    sections: [
+      {
+        name: "skills",
+        actions: [
+          { kind: "created", detail: "/repo/.build/claude/bro/SKILL.md", subject: "bro" },
+          { kind: "created", detail: "/repo/.build/agents/bro/SKILL.md", subject: "bro" },
+          { kind: "created", detail: "/home/.claude/skills/bro", subject: "bro" },
+          { kind: "created", detail: "/home/.agents/skills/bro", subject: "bro" },
+        ],
+      },
+    ],
+  };
+  const text = renderApply(withBuild);
+  assert.match(text, /\+ {2}skills {2}bro {2}\/home\/\.claude\/skills, \/home\/\.agents\/skills/);
+  assert.doesNotMatch(text, /\.build/);
 });
 
 test("one thing written to several places is a single change-log row", () => {
   const text = renderApply(fanOut());
   assert.match(text, /\+ {2}skills {2}bro {2}\/home\/\.agents\/skills, \/home\/\.claude\/skills/);
   assert.equal(text.split("\n").filter((line) => line.includes("bro")).length, 1);
-});
-
-test("the links total is omitted when each thing took exactly one operation", () => {
-  const oneEach: ApplyResult = {
-    ...fanOut(),
-    sections: [
-      {
-        name: "commands",
-        actions: [
-          { kind: "ok", detail: "/home/.claude/commands/greet.md", subject: "greet/claude" },
-          { kind: "ok", detail: "/home/.codex/prompts/greet.md", subject: "greet/codex" },
-        ],
-      },
-    ],
-  };
-  const text = renderApply(oneEach);
-  assert.match(text, /commands {3}2 ok/);
-  assert.doesNotMatch(text, /links/);
 });
 
 test("a thing that half succeeded reports its worst kind and points at that place", () => {
@@ -186,11 +195,26 @@ test("a thing that half succeeded reports its worst kind and points at that plac
     ],
   };
   const text = renderApply(mixed);
-  assert.match(text, /skills {3}1 conflict {3}2 links/);
+  assert.match(text, /skills {3}1 conflict/);
   assert.match(text, /! {2}skills {2}bro {2}\/home\/\.claude\/skills\/bro/);
   assert.doesNotMatch(text, /\.agents/);
   assert.equal(conflictCount(mixed), 1);
   assert.equal(applyData(mixed).summary.inSync, 0);
+});
+
+const notSelectedLine = (available: string[], selected: string[]): string =>
+  renderRemoteAdded("matt", available, selected).find((line) =>
+    line.includes("not selected"),
+  ) ?? "";
+
+test("a long unselected tail keeps the first four and tallies the rest", () => {
+  const line = notSelectedLine(["a", "b", "c", "d", "e", "f", "g"], ["a"]);
+  assert.equal(line, "not selected: b, c, d, e, and 2 more");
+});
+
+test("five or fewer unselected names stay listed in full", () => {
+  const line = notSelectedLine(["a", "b", "c", "d", "e", "f"], ["a"]);
+  assert.equal(line, "not selected: b, c, d, e, f");
 });
 
 test("dry run does not say nothing to do pending", () => {
