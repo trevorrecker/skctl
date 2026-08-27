@@ -62,32 +62,18 @@ npx @trevorrecker/skctl --help
 
 ## Quick start
 
+![skctl init then import](docs/media/skctl-init.gif)
+
+Point skctl at a root, then adopt the skills you already keep on disk:
+
 ```bash
 skctl init ~/dev/skills
-skctl create skill code-review -d "Review a code change" --body "Review the current change for bugs and report concrete findings." --hosts codex --no-paste
-skctl apply --dry-run
-skctl apply
-skctl status
+skctl import
 ```
 
-`init` creates the root and records it in the machine-local skctl config. `apply`
-compiles enabled content and updates the client paths. `status` checks drift without
-writing. Replace `codex` with the client you use. `skctl describe skill code-review`
-shows every client that can read the compiled skill.
-
-The root can contain:
-
-```text
-~/dev/skills/
-├── commands/
-├── instructions/
-│   └── AGENTS.md
-├── overlays/
-├── remotes/          fetched and ignored by Git
-├── skills/
-├── skills.config.json
-└── .build/           generated and ignored by Git
-```
+`init` creates the root and records it in the machine-local skctl config. `import`
+adopts your existing skill directories and compiles them for every client. Run
+`skctl apply` after a change, or `skctl status` to check for drift without writing.
 
 Root resolution follows `--root`, then `SKCTL_ROOT`, then the root in
 `${XDG_CONFIG_HOME:-~/.config}/skctl/config.json`.
@@ -129,7 +115,8 @@ git -C ~/dev/skills commit -m "chore: stop tracking remote clones"
 
 ## Build your catalog
 
-Adopt loose skill directories already under `~/.agents/skills`:
+`import` adopts loose skill directories under `~/.agents/skills`. Preview what it will
+take before it runs:
 
 ```bash
 skctl import --dry-run
@@ -138,6 +125,8 @@ skctl import
 
 Install every skill from a Git repository, or narrow the selection with
 `--skills one,two`:
+
+![skctl remote add](docs/media/skctl-remote.gif)
 
 ```bash
 skctl remote add https://github.com/owner/skills example
