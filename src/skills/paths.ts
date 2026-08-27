@@ -1,10 +1,32 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { projectSkillsDirs, userSkillsDirs } from "../providers/index.js";
 import { CommandHosts } from "./types.js";
 import type { CommandHost, Surface } from "./types.js";
 
 export type Scope = "global" | "project";
+
+export interface InstructionTarget {
+  path: string;
+  surface: Surface;
+}
+
+// An instruction file's basename names its host: CLAUDE.md is Claude's, and everything
+// else follows the AGENTS convention the agents surface serves. This is what lets a
+// machine-local target resolve its host guards without the user declaring one.
+export const surfaceForInstructionFile = (path: string): Surface =>
+  basename(path) === "CLAUDE.md" ? "claude" : "agents";
+
+const dedupeTargets = (targets: readonly InstructionTarget[]): InstructionTarget[] => {
+  const seen = new Set<string>();
+  const unique: InstructionTarget[] = [];
+  for (const target of targets) {
+    if (seen.has(target.path)) continue;
+    seen.add(target.path);
+    unique.push(target);
+  }
+  return unique;
+};
 
 export interface SkillPaths {
   scope: Scope;
@@ -18,7 +40,7 @@ export interface SkillPaths {
   gitignorePath: string;
   instructionsSource: string;
   instructionImports: string[];
-  instructionLinks: string[];
+  instructionLinks: InstructionTarget[];
   surfaceDirs: Record<Surface, string>;
   skillLockPath: string;
   commandDirs: Record<CommandHost, string>;
@@ -90,14 +112,15 @@ export const resolveSkillPaths = (
     gitignorePath: join(sourceRepo, ".gitignore"),
     instructionsSource: join(sourceRepo, "instructions", "AGENTS.md"),
     instructionImports: [join(home, "AGENTS.md"), join(home, "CLAUDE.md")],
-    instructionLinks: [
-      ...new Set([
-        join(resolvedClaudeConfigDir, "CLAUDE.md"),
-        join(resolvedCodexHome, "AGENTS.md"),
-        join(resolvedOpencodeConfigDir, "AGENTS.md"),
-        ...additionalInstructionLinks,
-      ]),
-    ],
+    instructionLinks: dedupeTargets([
+      { path: join(resolvedClaudeConfigDir, "CLAUDE.md"), surface: "claude" },
+      { path: join(resolvedCodexHome, "AGENTS.md"), surface: "agents" },
+      { path: join(resolvedOpencodeConfigDir, "AGENTS.md"), surface: "opencode" },
+      ...additionalInstructionLinks.map((path) => ({
+        path,
+        surface: surfaceForInstructionFile(path),
+      })),
+    ]),
     surfaceDirs: userSkillsDirs({
       home,
       claudeConfigDir: resolvedClaudeConfigDir,

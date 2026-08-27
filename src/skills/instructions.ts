@@ -6,19 +6,24 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, relative } from "node:path";
-import {
-  ensureSymlink,
-  isSymlink,
-  pathPresent,
-  symlinkTarget,
-} from "./fsx.js";
-import type { Action } from "./types.js";
-import type { SkillPaths } from "./paths.js";
+import { createHash } from "node:crypto";
+import { basename, dirname } from "node:path";
+import { applyGuards } from "./guards.js";
+import { guardTokensFor } from "../providers/index.js";
+import { surfaceForInstructionFile } from "./paths.js";
+import { pathPresent } from "./fsx.js";
+import type { Action, Surface } from "./types.js";
+import type { InstructionTarget, SkillPaths } from "./paths.js";
 
-const uniqueLinks = (paths: SkillPaths): string[] => [
-  ...new Set(paths.instructionLinks.filter(path => path !== paths.instructionsSource)),
-];
+// The whole instruction file is the body: resolve its host guards for the target's surface,
+// exactly as a skill body is compiled, so `<!-- host:claude -->` lands only in Claude's file.
+export const compileInstruction = (source: string, surface: Surface): string => {
+  const resolved = applyGuards(source, guardTokensFor(surface));
+  return resolved.endsWith("\n") ? resolved : `${resolved}\n`;
+};
+
+export const hashInstruction = (content: string): string =>
+  createHash("sha256").update(content).digest("hex");
 
 const readImportSources = (
   paths: SkillPaths,
@@ -31,40 +36,78 @@ const readImportSources = (
     return [{ path, content: readFileSync(path, "utf-8") }];
   });
 
+// Instruction files are prompt text a model reads, so skctl cannot stamp an ownership marker
+// into them the way it does for commands. It tracks the hash of what it last wrote instead:
+// a target that no longer matches that hash was edited by hand and is left untouched.
+const writeInstruction = (
+  target: InstructionTarget,
+  source: string,
+  recordedHash: string | undefined,
+  dryRun: boolean,
+): { action: Action; hash?: string } => {
+  const content = compileInstruction(source, target.surface);
+  const dest = target.path;
+  if (!existsSync(dest)) {
+    if (!dryRun) {
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, content, "utf-8");
+    }
+    return { action: { kind: "created", detail: dest }, hash: hashInstruction(content) };
+  }
+  const current = readFileSync(dest, "utf-8");
+  if (current === content) {
+    return { action: { kind: "ok", detail: dest }, hash: hashInstruction(content) };
+  }
+  if (recordedHash === undefined || hashInstruction(current) !== recordedHash) {
+    return {
+      action: { kind: "conflict", detail: dest, note: "edited by hand, left untouched" },
+    };
+  }
+  if (!dryRun) writeFileSync(dest, content, "utf-8");
+  return { action: { kind: "replaced", detail: dest }, hash: hashInstruction(content) };
+};
+
 export const syncInstructions = (
   paths: SkillPaths,
   dryRun: boolean,
-): Action[] => {
-  if (!existsSync(paths.instructionsSource)) return [];
+  hashes: Record<string, string> = {},
+): { actions: Action[]; hashes: Record<string, string> } => {
+  if (!existsSync(paths.instructionsSource)) return { actions: [], hashes };
+  const source = readFileSync(paths.instructionsSource, "utf-8");
   const subject = basename(paths.instructionsSource);
-  return uniqueLinks(paths).map(path => ({
-    ...ensureSymlink(path, paths.instructionsSource, dryRun),
-    subject,
-  }));
+  const actions: Action[] = [];
+  const next: Record<string, string> = { ...hashes };
+  for (const target of paths.instructionLinks) {
+    const { action, hash } = writeInstruction(
+      target,
+      source,
+      hashes[target.path],
+      dryRun,
+    );
+    actions.push({ ...action, subject });
+    if (!dryRun && hash !== undefined) next[target.path] = hash;
+  }
+  return { actions, hashes: dryRun ? hashes : next };
 };
 
 export const removeInstructionLink = (
-  paths: SkillPaths,
-  linkPath: string,
+  target: string,
+  recordedHash: string | undefined,
   dryRun: boolean,
 ): Action => {
-  if (!pathPresent(linkPath)) return { kind: "ok", detail: linkPath };
-  const expected = relative(dirname(linkPath), paths.instructionsSource);
-  if (!isSymlink(linkPath) || symlinkTarget(linkPath) !== expected) {
-    return {
-      kind: "conflict",
-      detail: linkPath,
-      note: "is not a managed instruction link, left untouched",
-    };
+  if (!existsSync(target)) return { kind: "ok", detail: target };
+  const current = readFileSync(target, "utf-8");
+  if (recordedHash === undefined || hashInstruction(current) !== recordedHash) {
+    return { kind: "conflict", detail: target, note: "edited by hand, left untouched" };
   }
-  if (!dryRun) rmSync(linkPath);
-  return { kind: "removed", detail: linkPath };
+  if (!dryRun) rmSync(target);
+  return { kind: "removed", detail: target };
 };
 
 export const importInstructions = (
   paths: SkillPaths,
   dryRun: boolean,
-) => {
+): { actions: Action[]; imported: boolean } => {
   if (paths.instructionImports.length === 0) {
     throw new Error("global instructions can only be imported in global scope");
   }
@@ -74,12 +117,15 @@ export const importInstructions = (
   if (!sourceExists && imports.length === 0) {
     throw new Error(`no instructions found at ${paths.instructionImports.join(" or ")}`);
   }
+  // A merge that cannot round-trip is worse than none, so import never invents host guards.
+  // Divergent home files are reported; the user reconciles them or writes guards by hand.
   if (
     !sourceExists &&
     imports.some(source => source.content !== imports[0]?.content)
   ) {
     throw new Error(
-      `instruction files have different content: ${imports.map(source => source.path).join(", ")}`,
+      `home instruction files differ (${imports.map(source => source.path).join(", ")}); ` +
+        "reconcile them or add host guards to the source, then import",
     );
   }
 
@@ -96,20 +142,17 @@ export const importInstructions = (
   }
 
   for (const source of imports) {
-    if (source.content !== content) {
+    const expected = compileInstruction(content, surfaceForInstructionFile(source.path));
+    if (source.content !== expected) {
       actions.push({
         kind: "conflict",
         detail: source.path,
-        note: "has different content, left untouched",
+        note: "differs from the tracked source, left untouched",
       });
       continue;
     }
     if (!dryRun) rmSync(source.path);
     actions.push({ kind: "removed", detail: source.path });
-  }
-
-  for (const path of uniqueLinks(paths)) {
-    actions.push(ensureSymlink(path, paths.instructionsSource, dryRun));
   }
   return { actions, imported: !sourceExists };
 };

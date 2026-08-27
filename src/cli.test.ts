@@ -100,7 +100,7 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
     join(codexHome, "AGENTS.md"),
     join(opencodeConfig, "AGENTS.md"),
   ]) {
-    assert.ok(lstatSync(path).isSymbolicLink());
+    assert.equal(lstatSync(path).isSymbolicLink(), false);
     assert.equal(readFileSync(path, "utf-8"), "# Shared rules\n");
   }
   assert.equal(existsSync(join(home, "AGENTS.md")), false);
@@ -111,7 +111,8 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
 
   const extraInstructions = join(home, "client-home", "AGENTS.md");
   run("instruction", "add", extraInstructions, "--no-raycast");
-  assert.ok(lstatSync(extraInstructions).isSymbolicLink());
+  assert.equal(lstatSync(extraInstructions).isSymbolicLink(), false);
+  assert.equal(readFileSync(extraInstructions, "utf-8"), "# Shared rules\n");
   const listed: unknown = JSON.parse(run("instruction", "list", "-o", "json"));
   assert.ok(isRecord(listed));
   assert.ok(Array.isArray(listed.targets));

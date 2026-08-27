@@ -10,6 +10,7 @@ export interface SkctlConfig {
   raycastDir?: string;
   activeTags?: string[];
   instructionTargets?: string[];
+  instructionHashes?: Record<string, string>;
   remoteRefreshHours?: number;
   remoteRefreshes?: Record<string, string>;
 }
@@ -72,6 +73,13 @@ export const loadConfig = (path: string = configPath()): SkctlConfig => {
         ),
       );
     }
+    if (typeof parsed.instructionHashes === "object" && parsed.instructionHashes !== null) {
+      config.instructionHashes = Object.fromEntries(
+        Object.entries(parsed.instructionHashes).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    }
     return config;
   } catch {
     return {};
@@ -99,6 +107,11 @@ export const setInstructionTarget = (
   else targets.delete(target);
   return { ...config, instructionTargets: [...targets].sort() };
 };
+
+export const setInstructionHashes = (
+  config: SkctlConfig,
+  hashes: Record<string, string>,
+): SkctlConfig => ({ ...config, instructionHashes: hashes });
 
 export const remoteRefreshDue = (
   config: SkctlConfig,

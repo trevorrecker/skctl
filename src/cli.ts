@@ -15,6 +15,7 @@ import { importLooseSkills } from "./skills/import.js";
 import {
   importInstructions,
   removeInstructionLink,
+  syncInstructions,
 } from "./skills/instructions.js";
 import { createCommand, createSkill } from "./skills/create.js";
 import { validateName } from "./skills/names.js";
@@ -60,6 +61,7 @@ import {
   remoteRefreshDue,
   resolveRoot,
   saveConfig,
+  setInstructionHashes,
   setInstructionTarget,
   setTagActive,
 } from "./config.js";
@@ -475,6 +477,14 @@ const scheduledRemoteRefresh = (
   return actions;
 };
 
+const sameHashes = (
+  a: Record<string, string> = {},
+  b: Record<string, string> = {},
+): boolean => {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+};
+
 const applyResult = (
   paths: SkillPaths,
   args: Args,
@@ -494,7 +504,11 @@ const applyResult = (
     loadManifest(paths.manifestPath),
     opts.dryRun,
     config.activeTags,
+    config.instructionHashes,
   );
+  if (!opts.dryRun && !sameHashes(config.instructionHashes, report.instructionHashes)) {
+    saveConfig(setInstructionHashes(loadConfig(), report.instructionHashes));
+  }
   const sections: ReportSection[] = [...(opts.leading ?? [])];
   if (refreshed.length > 0) {
     sections.push({ name: "remotes", note: "scheduled refresh", actions: refreshed });
@@ -642,13 +656,22 @@ const importDispatch = (args: Args): CommandOutput => {
   const resource = args.positional[1] ?? "skills";
   if (resource === "instructions") {
     const report = importInstructions(paths, args.dryRun);
+    const actions = [...report.actions];
+    if (!args.dryRun) {
+      const config = loadConfig();
+      const synced = syncInstructions(paths, false, config.instructionHashes);
+      actions.push(...synced.actions);
+      if (!sameHashes(config.instructionHashes, synced.hashes)) {
+        saveConfig(setInstructionHashes(loadConfig(), synced.hashes));
+      }
+    }
     return applyOutput(
       {
         verb: args.dryRun ? "import instructions" : "import",
         dryRun: args.dryRun,
         root: paths.sourceRepo,
         hosts: paths.commandHosts,
-        sections: [{ name: "instructions", actions: report.actions }],
+        sections: [{ name: "instructions", actions }],
       },
       args,
       [`${report.imported ? "imported" : "reconciled"} instructions`],
@@ -693,9 +716,10 @@ const instructionDispatch = (args: Args): CommandOutput => {
   const paths = resolveScope(args, config);
   const clientPaths = resolveScope(args, { ...config, instructionTargets: [] });
   if (operation === "list") {
+    const clientTargets = new Set(clientPaths.instructionLinks.map((entry) => entry.path));
     const targets = paths.instructionLinks.map((target) => ({
-      target,
-      origin: clientPaths.instructionLinks.includes(target) ? "client" : "local",
+      target: target.path,
+      origin: clientTargets.has(target.path) ? "client" : "local",
     }));
     return {
       text: renderDetails(
@@ -720,11 +744,8 @@ const instructionDispatch = (args: Args): CommandOutput => {
     throw new Error("the instruction source cannot be its own target");
   }
   if (operation === "add") {
-    if (clientPaths.instructionLinks.includes(target)) {
+    if (clientPaths.instructionLinks.some((entry) => entry.path === target)) {
       throw new Error(`instruction target is already managed for this client: ${target}`);
-    }
-    if (pathPresent(target) && !isSymlink(target)) {
-      throw new Error(`${target} exists and is not a symlink`);
     }
     const nextConfig = setInstructionTarget(config, target, true);
     saveConfig(nextConfig);
@@ -737,10 +758,12 @@ const instructionDispatch = (args: Args): CommandOutput => {
   if (!(config.instructionTargets ?? []).includes(target)) {
     throw new Error(`instruction target is not configured: ${target}`);
   }
-  const action = clientPaths.instructionLinks.includes(target)
+  const action = clientPaths.instructionLinks.some((entry) => entry.path === target)
     ? { kind: "ok", detail: target } satisfies Action
-    : removeInstructionLink(paths, target, false);
-  saveConfig(setInstructionTarget(config, target, false));
+    : removeInstructionLink(target, config.instructionHashes?.[target], false);
+  const remainingHashes = { ...config.instructionHashes };
+  delete remainingHashes[target];
+  saveConfig(setInstructionHashes(setInstructionTarget(config, target, false), remainingHashes));
   return applyOutput(
     {
       verb: "instruction remove",
@@ -820,7 +843,7 @@ const tagDispatch = (args: Args, remove: boolean): CommandOutput => {
 
 const statusDispatch = (args: Args): CommandOutput => {
   const paths = resolveScope(args);
-  const report = doctor(paths);
+  const report = doctor(paths, loadConfig().instructionHashes);
   return {
     text: renderStatus(report, paths.sourceRepo, { quiet: args.quiet }),
     data: statusData(report, paths.sourceRepo),
