@@ -1,6 +1,6 @@
 {
   "name": "@trevorrecker/skctl",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Manage portable agent skills, commands, and instructions across Claude Code, Codex, OpenCode, and Cursor",
   "keywords": [
