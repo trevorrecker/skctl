@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { importInstructions, syncInstructions } from "./instructions.js";
 import { doctor } from "./doctor.js";
@@ -67,6 +75,22 @@ test("a target skctl owns is rewritten when the source changes", () => {
 
   assert.ok(second.actions.some((action) => action.detail === claude && action.kind === "replaced"));
   assert.equal(readFileSync(claude, "utf-8"), "second\n");
+});
+
+test("apply replaces an old-style managed symlink with the compiled file", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-instructions-"));
+  const paths = resolveSkillPaths(home, join(home, "skills-root"));
+  setupSource(paths, "rules\n");
+  const claude = paths.instructionLinks[0]?.path ?? "";
+  mkdirSync(dirname(claude), { recursive: true });
+  symlinkSync(paths.instructionsSource, claude);
+  assert.ok(lstatSync(claude).isSymbolicLink());
+
+  const { actions } = syncInstructions(paths, false);
+
+  assert.ok(actions.some((action) => action.detail === claude && action.kind === "replaced"));
+  assert.equal(lstatSync(claude).isSymbolicLink(), false);
+  assert.equal(readFileSync(claude, "utf-8"), "rules\n");
 });
 
 test("importInstructions adopts identical home files and creates the source, not targets", () => {

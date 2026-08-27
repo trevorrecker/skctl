@@ -11,7 +11,7 @@ import { basename, dirname } from "node:path";
 import { applyGuards } from "./guards.js";
 import { guardTokensFor } from "../providers/index.js";
 import { surfaceForInstructionFile } from "./paths.js";
-import { pathPresent } from "./fsx.js";
+import { isSymlink, pathPresent } from "./fsx.js";
 import type { Action, Surface } from "./types.js";
 import type { InstructionTarget, SkillPaths } from "./paths.js";
 
@@ -47,6 +47,16 @@ const writeInstruction = (
 ): { action: Action; hash?: string } => {
   const content = compileInstruction(source, target.surface);
   const dest = target.path;
+  // Before hashes, skctl linked every target to the source. Such a symlink (or a broken
+  // one) is skctl's own and gets replaced with the compiled file, so the upgrade is seamless.
+  if (isSymlink(dest)) {
+    if (!dryRun) {
+      rmSync(dest);
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, content, "utf-8");
+    }
+    return { action: { kind: "replaced", detail: dest }, hash: hashInstruction(content) };
+  }
   if (!existsSync(dest)) {
     if (!dryRun) {
       mkdirSync(dirname(dest), { recursive: true });
@@ -95,6 +105,10 @@ export const removeInstructionLink = (
   recordedHash: string | undefined,
   dryRun: boolean,
 ): Action => {
+  if (isSymlink(target)) {
+    if (!dryRun) rmSync(target);
+    return { kind: "removed", detail: target };
+  }
   if (!existsSync(target)) return { kind: "ok", detail: target };
   const current = readFileSync(target, "utf-8");
   if (recordedHash === undefined || hashInstruction(current) !== recordedHash) {
