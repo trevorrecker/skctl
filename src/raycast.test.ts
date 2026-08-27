@@ -66,7 +66,9 @@ test("syncRaycast writes executable scripts, is idempotent, and refuses foreign 
   assert.ok(created.every((a) => a.kind === "created"));
   const paste = join(target, "skctl-paste.sh");
   assert.ok(existsSync(paste));
-  assert.ok((statSync(paste).mode & 0o100) !== 0, "paste script should be executable");
+  if (process.platform !== "win32") {
+    assert.ok((statSync(paste).mode & 0o100) !== 0, "paste script should be executable");
+  }
 
   assert.ok(syncRaycast(paths, target).every((a) => a.kind === "ok"));
 

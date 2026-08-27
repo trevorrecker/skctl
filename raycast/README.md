@@ -1,9 +1,10 @@
 # Raycast script commands
 
-`skctl raycast sync` generates the `.sh` files in this directory and reports what it
-wrote. `skctl apply` keeps them current too, but quietly: Raycast is a machine-local
-convenience rather than part of the manifest, so it stays out of the apply report unless
-a script you edited by hand blocks the sync. Git ignores the generated files.
+`skctl raycast sync` writes scripts to
+`${XDG_CONFIG_HOME:-~/.config}/skctl/raycast` by default and reports what it wrote.
+`skctl apply` keeps them current too, but quietly. Raycast is a machine-local
+convenience outside the manifest, so it stays out of the apply report unless a script
+you edited by hand blocks the sync.
 
 Turn the whole thing off with `skctl config set raycast off`, back on with `on`, or point
 it elsewhere with `skctl config set raycast <dir>`. `skctl apply --no-raycast` skips it
@@ -11,8 +12,9 @@ for a single run.
 
 ## Add to Raycast
 
-Raycast → Settings → Extensions → Script Commands → **Add Script Directory** → select
-this directory. The commands appear immediately.
+Run `skctl config` to see the exact directory. In Raycast, open Settings > Extensions >
+Script Commands > **Add Script Directory**, then select that directory. The commands
+appear immediately.
 
 | Command | What it does |
 |---------|--------------|
@@ -37,8 +39,8 @@ paste: true
 ```
 
 `skctl get skills --paste` filters to these. A common pattern is a paste-only block
-kept out of every harness with `"enabled": false` in `skills.config.json` and remains
+kept out of every client with `"enabled": false` in `skills.config.json` and remains
 available for pasting.
 
-The scripts prepend a sane PATH because Raycast runs with a minimal environment; they
-rely on `skctl` resolving via `~/.local/bin` and a `node` from Homebrew or nvm.
+The scripts set PATH because Raycast runs with a minimal environment. They
+search common local, Homebrew, system, and nvm paths for `skctl` and `node`.

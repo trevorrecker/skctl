@@ -9,8 +9,8 @@ import {
   createSkill,
   renderCommand,
   renderSkill,
-  validateName,
 } from "./create.js";
+import { validateName } from "./names.js";
 import { resolveSkillPaths } from "./paths.js";
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), "skctl-create-"));
@@ -18,8 +18,9 @@ const scratch = (): string => mkdtempSync(join(tmpdir(), "skctl-create-"));
 test("renderSkill defaults name, description placeholder, and paste", () => {
   const parsed = parseFrontmatter(renderSkill({ name: "demo", paste: true }));
   assert.equal(parsed.data.name, "demo");
-  assert.equal(typeof parsed.data.description, "string");
-  assert.match(parsed.data.description as string, /TODO/);
+  const description = parsed.data.description;
+  assert.ok(typeof description === "string");
+  assert.match(description, /TODO/);
   assert.equal(parsed.data.paste, true);
   assert.match(parsed.content, /# demo/);
   assert.match(parsed.content, /What this skill never does/);
@@ -63,6 +64,9 @@ test("validateName rejects non-kebab names", () => {
   assert.throws(() => validateName("Foo"), /invalid name/);
   assert.throws(() => validateName("a b"), /invalid name/);
   assert.throws(() => validateName("-lead"), /invalid name/);
+  assert.throws(() => validateName("trail-"), /invalid name/);
+  assert.throws(() => validateName("two--dashes"), /invalid name/);
+  assert.throws(() => validateName("a".repeat(65)), /invalid name/);
   assert.throws(() => validateName(""), /invalid name/);
   validateName("ok-name-2");
 });

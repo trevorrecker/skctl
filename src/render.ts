@@ -11,13 +11,14 @@ import {
   padStart,
   red,
   report,
+  sanitizeTerminalText,
   shortPath,
   shorten,
   title,
   yellow,
 } from "./ui.js";
 import type { DetailPair } from "./ui.js";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
 import type { DoctorEntry, DoctorReport } from "./skills/doctor.js";
 import type { RemoteInfo } from "./skills/remotes.js";
@@ -54,7 +55,6 @@ export interface ApplySectionData {
   name: string;
   note?: string;
   counts: ActionTally;
-  links: number;
   actions: Action[];
 }
 
@@ -140,21 +140,23 @@ const groupActions = (actions: readonly Action[]): ActionGroup[] => {
 const leadAction = (group: ActionGroup): Action =>
   group.actions.find((action) => action.kind === group.kind) ?? group.actions[0];
 
-// Only the operations matching the group's kind are worth naming: when a skill links
-// cleanly into one directory and collides in another, the row should point at the
-// collision. A single operation is clearest as its full path; several are clearest as
-// the set of directories, since the subject already names the file.
+// Rows name the destinations a reader acts on: the client directories, not the internal
+// .build/ copies every skill also links through. A single destination reads clearest as
+// its full path; several read clearest as the set of directories, since the subject
+// already names the file. Fall back to the build paths only when nothing else remains.
 const destination = (group: ActionGroup): string => {
   const relevant = group.actions.filter((action) => action.kind === group.kind);
-  if (relevant.length === 1) return shorten(relevant[0].detail);
+  const named = relevant.filter((action) => !action.detail.includes("/.build/"));
+  const shown = named.length > 0 ? named : relevant;
+  if (shown.length === 1) return sanitizeTerminalText(shorten(shown[0].detail));
   const dirs = [
     ...new Set(
-      relevant.map((action) =>
-        action.detail.startsWith("/") ? dirname(action.detail) : action.detail,
+      shown.map((action) =>
+        isAbsolute(action.detail) ? dirname(action.detail) : action.detail,
       ),
     ),
   ];
-  return shorten(dirs.join(", "));
+  return sanitizeTerminalText(shorten(dirs.join(", ")));
 };
 
 const tally = (groups: readonly ActionGroup[]): ActionTally => {
@@ -195,18 +197,15 @@ const countsTable = (sections: readonly ReportSection[]): string[] => {
   );
   const rows = sections.map((section, index) => {
     const counts = tallies[index] ?? {};
-    const groups = grouped[index] ?? [];
     const cells = kindOrder
       .filter((kind) => (counts[kind] ?? 0) > 0)
       .map((kind) => {
         const number = padStart(String(counts[kind]), digits);
         return kind === "ok" ? `${number} ${dim(kind)}` : kindColor[kind](`${number} ${kind}`);
       });
-    const links = section.actions.length;
     return [
       section.name,
       ...(cells.length > 0 ? cells : [dim(Marks.none)]),
-      links === groups.length ? "" : dim(`${links} links`),
       section.note === undefined ? "" : dim(section.note),
     ];
   });
@@ -221,9 +220,9 @@ const changeLines = (
     return [
       kindColor[group.kind](kindMark[group.kind]),
       dim(section.name),
-      group.subject,
+      sanitizeTerminalText(group.subject),
       destination(group),
-      note === undefined ? "" : dim(shorten(note)),
+      note === undefined ? "" : dim(shorten(sanitizeTerminalText(note))),
     ];
   });
   return columns(dropEmptyColumns(rows));
@@ -280,7 +279,6 @@ export const applyData = (
       name: section.name,
       note: section.note,
       counts: tally(groupActions(section.actions)),
-      links: section.actions.length,
       actions: section.actions,
     })),
     summary: {
@@ -394,14 +392,51 @@ export const renderCommands = (commands: readonly CommandInfo[], scope: string):
   );
 };
 
+const clip = (text: string, width: number): string =>
+  text.length <= width ? text : `${text.slice(0, width - 1).trimEnd()}…`;
+
 const remoteState = (remote: RemoteInfo): string =>
   remote.cloned ? (remote.head === undefined ? "cloned" : `cloned@${remote.head}`) : "not cloned";
 
 export const unselectedSkills = (remote: RemoteInfo): string[] =>
-  remote.available.filter((name) => !remote.skills.includes(name));
+  remote.catalog.filter((entry) => !entry.selected).map((entry) => entry.selector);
 
 const selectionCount = (remote: RemoteInfo): string =>
-  `${remote.skills.length} of ${remote.cloned ? remote.available.length : "?"}`;
+  `${remote.skills.length} of ${remote.cloned ? remote.catalog.length : "?"}`;
+
+const groupCount = (remote: RemoteInfo): number =>
+  new Set(remote.catalog.map((entry) => entry.group?.path ?? "")).size;
+
+// A multi-plugin repository is the reason a selector can be path-qualified, so the tree groups
+// by plugin and prints the selector rather than the bare name.
+export const remoteCatalogLines = (remote: RemoteInfo): string[] => {
+  if (!remote.cloned) return [dim("unknown until cloned")];
+  if (remote.catalog.length === 0) return [dim(Marks.none)];
+  const groups = new Map<string, typeof remote.catalog>();
+  for (const entry of remote.catalog) {
+    const key = entry.group?.path ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups.entries()].flatMap(([path, entries]) => {
+    const group = entries[0].group;
+    const heading = group === undefined ? "" : sanitizeTerminalText(group.name ?? path);
+    const description =
+      group?.description === undefined ? undefined : sanitizeTerminalText(group.description);
+    return [
+      ...(heading === ""
+        ? []
+        : [description === undefined ? heading : `${heading}  ${dim(clip(description, 56))}`]),
+      ...entries.map(
+        (entry) =>
+          `  ${entry.selected ? green(Marks.on) : dim(Marks.off)} ${
+            entry.selected
+              ? sanitizeTerminalText(entry.selector)
+              : dim(sanitizeTerminalText(entry.selector))
+          }`,
+      ),
+    ];
+  });
+};
 
 export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   if (remotes.length === 0) {
@@ -409,13 +444,14 @@ export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   }
   const rows = remotes.map((remote) => [
     remote.cloned ? green(Marks.on) : yellow(Marks.off),
-    remote.alias,
-    dim(remote.url),
+    sanitizeTerminalText(remote.alias),
+    dim(sanitizeTerminalText(remote.url)),
     unselectedSkills(remote).length > 0 ? yellow(selectionCount(remote)) : selectionCount(remote),
+    groupCount(remote) > 1 ? dim(plural(groupCount(remote), "plugin")) : "",
     remote.cloned ? dim(remoteState(remote)) : yellow(remoteState(remote)),
   ]);
   const spare = remotes.reduce((total, remote) => total + unselectedSkills(remote).length, 0);
-  return report([title("remotes")], table(["", "ALIAS", "URL", "SKILLS", "STATE"], rows), [
+  return report([title("remotes")], table(["", "ALIAS", "URL", "SKILLS", "", "STATE"], rows), [
     joinDots([
       plural(remotes.length, "remote"),
       spare === 0 ? "" : yellow(`${spare} available, not selected`),
@@ -424,6 +460,13 @@ export const renderRemotes = (remotes: readonly RemoteInfo[]): string => {
   ]);
 };
 
+// A long tail of names buries the line. Past five, keep the first four and tally the
+// rest so the reader sees what they skipped without scrolling a wall of skills.
+const collapseNames = (names: readonly string[]): string =>
+  names.length > 5
+    ? `${names.slice(0, 4).join(", ")}, and ${names.length - 4} more`
+    : names.join(", ");
+
 export const renderRemoteAdded = (
   alias: string,
   available: readonly string[],
@@ -431,9 +474,11 @@ export const renderRemoteAdded = (
 ): string[] => {
   const spare = available.filter((name) => !selected.includes(name));
   return [
-    `added remote '${alias}' with ${plural(selected.length, "skill")}`,
-    dim(`selected: ${selected.join(", ")}`),
-    ...(spare.length > 0 ? [dim(`not selected: ${spare.join(", ")}`)] : []),
+    `added remote '${sanitizeTerminalText(alias)}' with ${plural(selected.length, "skill")}`,
+    dim(`selected: ${selected.map(sanitizeTerminalText).join(", ")}`),
+    ...(spare.length > 0
+      ? [dim(`not selected: ${collapseNames(spare.map(sanitizeTerminalText))}`)]
+      : []),
   ];
 };
 
@@ -467,7 +512,7 @@ export const renderDetails = (
 export const renderNotice = (lines: readonly string[]): string => report(lines);
 
 export const renderError = (message: string): string =>
-  `${red(Marks.fail)} ${message.split("\n").join("\n  ")}\n`;
+  `${red(Marks.fail)} ${message.split("\n").map(sanitizeTerminalText).join("\n  ")}\n`;
 
 const flagGroup = (heading: string, rows: ReadonlyArray<readonly [string, string]>): string[] => [
   dim(heading),
@@ -480,7 +525,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
   [
     "INSTALL SKILLS FROM A GIT REPOSITORY",
     [
-      ["skctl remote add <url>", "clone it, take every skill it ships, link them into each host"],
+      ["skctl remote add <url>", "clone it, select every skill it ships, and apply"],
       ["skctl describe remote <alias>", "review what it shipped and what you skipped"],
       ["skctl disable skill <name>", "stop using one of them"],
       ["", ""],
@@ -503,6 +548,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["remote add <url> [alias]", "clone a repository and select its skills"],
       ["remote remove <alias>", "drop a remote, its clone, and its selections"],
       ["remote list", "same view as `get remotes`"],
+      ["browse [alias|url]", "pick skills from a remote's tree, then apply"],
       ["pull [remote]", "fast-forward tracked remotes, then apply"],
     ],
   ],
@@ -522,10 +568,20 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["enable|disable skill|command|tag <name>", "toggle an entry, then apply"],
       ["tag|untag skill <name> <tag...>", "edit a skill's shared tags"],
       ["instruction list|add|remove [path]", "manage machine-local instruction targets"],
-      ["config [set root|raycast|refresh <value>]", "show or update configuration; raycast takes on, off, or a directory"],
+      ["config [set root|raycast|refresh <value>]", "show or update configuration; refresh also takes off"],
       ["refresh", "update root, remotes, and client targets"],
       ["schedule install [hours]|status|remove", "manage the background refresh job"],
       ["raycast sync [--dir <path>]", "regenerate the Raycast script commands and report"],
+    ],
+  ],
+  [
+    "PROJECT A SUBSET INTO A DIRECTORY",
+    [
+      ["project init --tags <a,b>", "select part of the global root for this directory"],
+      ["project init --skills <x,y>", "select by name instead of by tag"],
+      ["project", "reconcile the directory against its recorded selection"],
+      ["project status", "show what this directory takes and from where"],
+      ["project remove", "clear the projection and its config"],
     ],
   ],
 ];
@@ -546,19 +602,25 @@ export const renderUsage = (): string =>
     [
       title(
         "skctl",
-        dim("portable agent skills, commands, and instructions across Claude Code, Codex, and OpenCode"),
+        dim("portable agent skills, commands, and instructions across Claude Code, Codex, OpenCode, and Cursor"),
       ),
     ],
     usageLines(),
     flagGroup("GLOBAL FLAGS", [
       ["--root <dir>", "override the skills root"],
       ["--project[=DIR]", "operate on <DIR>/.agents"],
+      ["-h, --help", "show usage without running a command"],
+      ["-v, --version", "show the package version"],
       ["-o, --output <fmt>", "wide (default), name, json, body, raw"],
-      ["--dry-run", "plan without writing, on apply, import, and detach"],
+      ["--dry-run", "plan a supported write without changing files"],
       ["-q, --quiet", "print conflicts and the summary only"],
       ["--no-color", "disable color; NO_COLOR and FORCE_COLOR are honored"],
       ["--no-raycast", "skip the Raycast sync for this run"],
-      ["--skills <a,b>", "narrow what `remote add` selects"],
+      ["--paste", "filter `get skills` to paste-enabled entries"],
+      ["--skills <a,b>", "narrow what `remote add` or `project init` selects"],
+      ["--dir <path>", "select the project or Raycast target directory"],
+      ["--link, --copy", "how `project` materializes skills; link is the default"],
+      ["--force", "replace a source file or a remote alias URL"],
     ]),
     flagGroup("CREATE FLAGS", [
       ["-d, --description <text>", "frontmatter description"],
@@ -568,7 +630,6 @@ export const renderUsage = (): string =>
       ["--argument-hint <text>", "commands only"],
       ["--no-paste", "skip the paste flag, skills only"],
       ["--apply", "apply immediately after creating"],
-      ["--force", "overwrite an existing source file"],
     ]),
     [dim("Root resolution: --root > SKCTL_ROOT > ~/.config/skctl/config.json")],
   );

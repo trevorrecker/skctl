@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { isRecord } from "./record.js";
 import { defaultManifest, saveManifest } from "./skills/manifest.js";
 
 export interface SkctlConfig {
@@ -35,10 +36,8 @@ export const configPath = (home: string = homedir()): string =>
 export const loadConfig = (path: string = configPath()): SkctlConfig => {
   if (!existsSync(path)) return {};
   try {
-    // SAFETY: the assertion only permits property reads, and every field below is
-    // typeof-checked before use. A non-object parse result throws on first read and
-    // lands in the catch, which returns an empty config.
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (!isRecord(parsed)) return {};
     const config: SkctlConfig = {};
     if (typeof parsed.root === "string") config.root = parsed.root;
     if (typeof parsed.raycastDir === "string") config.raycastDir = parsed.raycastDir;
@@ -130,7 +129,7 @@ export const saveConfig = (
   path: string = configPath(),
 ): void => {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  writeFileSync(path, `${JSON.stringify(config, undefined, 2)}\n`, "utf-8");
 };
 
 export const resolveRoot = (

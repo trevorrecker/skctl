@@ -62,5 +62,5 @@ test("listCommands reports command state and hosts", () => {
   const commands = listCommands(paths);
   assert.deepEqual(commands.map((c) => c.name), ["demo-cmd"]);
   assert.equal(commands[0].enabled, true);
-  assert.deepEqual(commands[0].hosts, ["claude", "codex", "opencode"]);
+  assert.deepEqual(commands[0].hosts, ["claude", "codex", "opencode", "cursor"]);
 });

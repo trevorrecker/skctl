@@ -2,13 +2,14 @@
   "name": "@trevorrecker/skctl",
   "version": "0.3.0",
   "type": "module",
-  "description": "A ctl-style manager for portable agent skills and slash commands across hosts (Claude Code, Codex, OpenCode)",
+  "description": "Manage portable agent skills, commands, and instructions across Claude Code, Codex, OpenCode, and Cursor",
   "keywords": [
     "skills",
     "agents",
     "claude-code",
     "codex",
     "opencode",
+    "cursor",
     "raycast",
     "cli"
   ],
@@ -33,16 +34,16 @@
     "!dist/**/*.test.d.ts"
   ],
   "engines": {
-    "node": ">=18"
+    "node": "^22.13 || ^24 || >=26"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && node -e \"if (process.platform !== 'win32') require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsc --watch",
-    "test": "node --test dist/*.test.js dist/*/*.test.js",
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "changeset:version": "changeset version && npm install --package-lock-only --ignore-scripts",
-    "release": "npm run build && changeset publish",
+    "release": "changeset publish",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm test"
   },
   "publishConfig": {
     "access": "public",

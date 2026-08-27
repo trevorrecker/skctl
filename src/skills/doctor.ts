@@ -2,23 +2,13 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isSymlink, pathPresent, symlinkTarget } from "./fsx.js";
 import { loadManifest } from "./manifest.js";
-import { resolveRemoteSkills } from "./remotes.js";
-import { listCommandNames, listSkillNames } from "./sync.js";
+import { loadOverlays } from "./overlays.js";
+import { resolveRemoteSkills, selectorName } from "./remotes.js";
+import { lockedSkillNames } from "./skill-lock.js";
+import { GeneratedIgnoreEntries, listCommandNames, listSkillNames } from "./sync.js";
+import { AllSurfaces } from "./types.js";
+import type { Surface } from "./types.js";
 import type { SkillPaths } from "./paths.js";
-
-const externallyManaged = (skillLockPath: string): Set<string> => {
-  if (!existsSync(skillLockPath)) return new Set();
-  try {
-    // SAFETY: only `skills` is read, and it is defaulted before use. Any other shape,
-    // including a non-object, throws into the catch below and yields an empty set.
-    const parsed = JSON.parse(readFileSync(skillLockPath, "utf-8")) as {
-      skills?: Record<string, unknown>;
-    };
-    return new Set(Object.keys(parsed.skills ?? {}));
-  } catch {
-    return new Set();
-  }
-};
 
 export interface DoctorEntry {
   label: string;
@@ -38,27 +28,18 @@ const hasRealSkillFile = (dir: string): boolean => {
   return existsSync(skillFile) && !isSymlink(skillFile);
 };
 
-const scanClaudeSkills = (paths: SkillPaths, report: DoctorReport): void => {
-  if (!existsSync(paths.claudeSkills)) return;
-  for (const entry of readdirSync(paths.claudeSkills, { withFileTypes: true })) {
-    const path = join(paths.claudeSkills, entry.name);
-    if (entry.isSymbolicLink()) {
-      if (!existsSync(path)) report.issues.push({ label: "broken link", detail: path });
-    } else if (entry.isDirectory()) {
-      report.issues.push({
-        label: "drift",
-        detail: path,
-        hint: "real directory, expected a symlink into ~/.agents/skills",
-      });
-    }
-  }
-};
-
-const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
-  if (!existsSync(paths.agentsSkills)) return;
-  const vendored = externallyManaged(paths.skillLockPath);
-  for (const entry of readdirSync(paths.agentsSkills, { withFileTypes: true })) {
-    const path = join(paths.agentsSkills, entry.name);
+// Apply only writes the opencode and cursor surfaces when a skill needs a directory that
+// only that client reads, so anything else living there belongs to someone else and is worth
+// a note rather than a complaint.
+const scanSurfaceLinks = (
+  paths: SkillPaths,
+  surface: Surface,
+  report: DoctorReport,
+): void => {
+  const dir = paths.surfaceDirs[surface];
+  if (dir === paths.sourceSkills || !existsSync(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
     if (entry.isSymbolicLink()) {
       if (!existsSync(path)) {
         report.issues.push({ label: "broken link", detail: path });
@@ -66,10 +47,53 @@ const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
       }
       const target = symlinkTarget(path) ?? "";
       const resolved = resolve(dirname(path), target);
-      const managed = [paths.sourceSkills, paths.remotesDir].some(
-        dir => resolved === dir || resolved.startsWith(dir + sep),
-      );
-      if (!managed) {
+      const expected = join(paths.buildDir, surface, entry.name);
+      const managed = resolved === paths.buildDir || resolved.startsWith(paths.buildDir + sep);
+      if (resolved !== expected && (managed || surface === "claude")) {
+        report.issues.push({
+          label: "drift",
+          detail: path,
+          hint: `expected -> ${relative(dirname(path), expected)}`,
+        });
+      } else if (!managed) {
+        report.notes.push({ label: "unmanaged", detail: path, hint: `${surface} surface` });
+      }
+    } else if (entry.isDirectory()) {
+      if (surface === "claude") {
+        report.issues.push({
+          label: "drift",
+          detail: path,
+          hint: "real directory, expected a link into .build/",
+        });
+      } else {
+        report.notes.push({ label: "unmanaged", detail: path, hint: `${surface} surface` });
+      }
+    }
+  }
+};
+
+const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
+  const agentsSkills = paths.surfaceDirs.agents;
+  if (!existsSync(agentsSkills)) return;
+  const vendored = lockedSkillNames(paths.skillLockPath);
+  for (const entry of readdirSync(agentsSkills, { withFileTypes: true })) {
+    const path = join(agentsSkills, entry.name);
+    if (entry.isSymbolicLink()) {
+      if (!existsSync(path)) {
+        report.issues.push({ label: "broken link", detail: path });
+        continue;
+      }
+      const target = symlinkTarget(path) ?? "";
+      const resolved = resolve(dirname(path), target);
+      const managed = resolved === paths.buildDir || resolved.startsWith(paths.buildDir + sep);
+      const expected = join(paths.buildDir, "agents", entry.name);
+      if (managed && resolved !== expected) {
+        report.issues.push({
+          label: "drift",
+          detail: path,
+          hint: `expected -> ${relative(dirname(path), expected)}`,
+        });
+      } else if (!managed) {
         report.notes.push({ label: "legacy link", detail: entry.name, hint: `-> ${target}` });
       }
     } else if (entry.isDirectory() && vendored.has(entry.name)) {
@@ -107,7 +131,8 @@ const scanOrphans = (paths: SkillPaths, report: DoctorReport): void => {
   const skills = new Set([
     ...listSkillNames(paths.sourceSkills),
     ...remotes.skills.map((skill) => skill.name),
-    ...Object.values(manifest.remotes).flatMap((remote) => remote.skills),
+    // A remote selection may be path-qualified, so compare on the name a client would see.
+    ...Object.values(manifest.remotes).flatMap((remote) => remote.skills.map(selectorName)),
   ]);
   const commands = new Set(listCommandNames(paths.sourceCommands));
   for (const name of Object.keys(manifest.skills)) {
@@ -117,6 +142,42 @@ const scanOrphans = (paths: SkillPaths, report: DoctorReport): void => {
     if (!commands.has(name)) {
       report.issues.push({ label: "orphan command entry", detail: name });
     }
+  }
+  for (const [alias, remote] of Object.entries(manifest.remotes)) {
+    if (remote.skills.length === 0) {
+      report.notes.push({
+        label: "nothing selected",
+        detail: alias,
+        hint: "run `skctl browse` or `skctl remote remove`",
+      });
+    }
+  }
+  const { overlays, problems } = loadOverlays(paths);
+  for (const problem of problems) {
+    report.issues.push({ label: "overlay", detail: problem.detail, hint: problem.note });
+  }
+  for (const [name, overlay] of overlays) {
+    if (!skills.has(name)) {
+      report.issues.push({ label: "orphan overlay", detail: overlay.path, hint: `no skill '${name}'` });
+    }
+  }
+};
+
+const scanGeneratedIgnores = (paths: SkillPaths, report: DoctorReport): void => {
+  const ignored = new Set(
+    existsSync(paths.gitignorePath)
+      ? readFileSync(paths.gitignorePath, "utf-8")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+      : [],
+  );
+  const missing = GeneratedIgnoreEntries.filter((entry) => !ignored.has(entry));
+  if (missing.length > 0) {
+    report.issues.push({
+      label: "generated state not ignored",
+      detail: paths.gitignorePath,
+      hint: `run \`skctl apply\` to add ${missing.join(", ")}`,
+    });
   }
 };
 
@@ -179,9 +240,12 @@ export const doctor = (paths: SkillPaths): DoctorReport => {
     report.issues.push({ label: "source repo missing", detail: paths.sourceRepo });
     return report;
   }
-  scanClaudeSkills(paths, report);
+  for (const surface of AllSurfaces) {
+    if (surface !== "agents" || paths.scope !== "global") scanSurfaceLinks(paths, surface, report);
+  }
   if (paths.scope === "global") scanAgentsSkills(paths, report);
   scanInstructions(paths, report);
   scanOrphans(paths, report);
+  scanGeneratedIgnores(paths, report);
   return report;
 };

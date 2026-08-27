@@ -12,6 +12,7 @@ test("renderLaunchAgent runs refresh with the configured root and interval", () 
     environment: {
       HOME: "/Users/test",
       CODEX_HOME: "/Users/test/.codex-alt",
+      CURSOR_CONFIG_DIR: "/Users/test/.cursor-alt",
     },
   });
 
@@ -22,4 +23,5 @@ test("renderLaunchAgent runs refresh with the configured root and interval", () 
   assert.match(plist, /<string>--no-color<\/string>/);
   assert.match(plist, /skills &amp; tools/);
   assert.match(plist, /CODEX_HOME/);
+  assert.match(plist, /CURSOR_CONFIG_DIR/);
 });

@@ -8,6 +8,7 @@ import {
   dropEmptyColumns,
   keyValues,
   report,
+  sanitizeTerminalText,
   setColor,
   shortPath,
   shorten,
@@ -26,6 +27,13 @@ test("width ignores ANSI sequences", () => {
   setColor(true);
   assert.equal(width(dim("abcd")), 4);
   setColor(false);
+});
+
+test("terminal text drops control sequences from remote metadata", () => {
+  assert.equal(
+    sanitizeTerminalText("plugin\u001B]52;c;clipboard\u0007\nname"),
+    "plugin]52;c;clipboardname",
+  );
 });
 
 test("columns align on visible width and cap runaway cells", () => {
@@ -61,11 +69,11 @@ test("dropEmptyColumns removes columns that are blank everywhere", () => {
 });
 
 test("paths shorten to a tilde inside home", () => {
-  const inside = join(homedir(), "dev", "skills");
-  assert.equal(shortPath(inside), "~/dev/skills");
+  const inside = join(homedir(), "agent-skills");
+  assert.equal(shortPath(inside), "~/agent-skills");
   assert.equal(shortPath(homedir()), "~");
   assert.equal(shortPath("/opt/tools"), "/opt/tools");
-  assert.equal(shorten(`linked ${inside} ok`), "linked ~/dev/skills ok");
+  assert.equal(shorten(`linked ${inside} ok`), "linked ~/agent-skills ok");
 });
 
 test("report indents its groups and separates them with blank lines", () => {

@@ -19,8 +19,8 @@ skctl schedule install 24h
 ```
 
 The job runs at load and at the configured interval. It captures `HOME` and any set
-values for `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR`, `SKCTL_ROOT`,
-and `XDG_CONFIG_HOME`. Machine-local instruction targets remain available through
+values for `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `CURSOR_CONFIG_DIR`,
+`OPENCODE_CONFIG_DIR`, `SKCTL_ROOT`, and `XDG_CONFIG_HOME`. Machine-local instruction targets remain available through
 the skctl config file.
 
 ```bash
