@@ -3,48 +3,12 @@
 [![CI](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml/badge.svg)](https://github.com/trevorrecker/skctl/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@trevorrecker/skctl)](https://www.npmjs.com/package/@trevorrecker/skctl)
 
-`skctl` keeps your agent skills in one catalog and controls where each skill
-appears.
+`skctl` ("SKUT-ul") manages agent skills, commands, and shared instructions across Claude Code,
+Codex, OpenCode, and Cursor. It keeps one source root, compiles each skill for the
+clients that will read it, and reconciles their user or project directories.
 
-Store skills you write alongside skills selected from Git repositories. Add shared
-commands and instructions in the same root. skctl compiles the format each client
-expects, then applies the enabled set to Claude Code, Codex, OpenCode, and Cursor
-or projects a smaller set into one repository.
-
-Put the root in Git. Git records changes to the source and catalog, and you can
-clone the same library onto another machine. The source stays in your library even
-when you disable a skill, activate it only through a tag, or leave it out of a
-project.
-
-## One library, different working sets
-
-Your library can hold more than any one setup needs:
-
-- Add skills you own or select one, several, or every skill from a remote repository.
-- Disable a skill without deleting its source or remote selection.
-- Tag skills by context, then choose the active tags on each machine.
-- Link or copy a named or tagged subset into an individual project.
-- Keep small client differences in host sections and local overlays instead of forks.
-
-The shared root records source, remote selections, tag membership, and explicit
-disables. Machine-local config records where the root lives and which tags are
-active. Each machine and project can use a different set from the same catalog.
-
-## Requirements and platform support
-
-- Node.js 22.13 or newer on a supported even-numbered release line.
-- Git for remote repositories and `skctl refresh`.
-
-| Platform | Support |
-|---|---|
-| macOS | Primary platform. Full CLI, Raycast, and launchd scheduling. |
-| Linux | Core CLI and link workflow. Use your own scheduler for `skctl refresh`. |
-| Windows | Experimental. Enable Developer Mode or provide symlink privileges. Raycast and launchd are unavailable. |
-
-The CI workflow targets macOS, Linux, and Windows for the parser, compiler, tests,
-and package scripts. Native Windows still needs symlink permission for apply, project links,
-instructions, and skills that bundle files. WSL works when the client and
-skctl both use the same Linux home and config paths.
+It also tracks skills from any Git repository and layers your own edits on top with
+overlays, so your customizations survive every upstream update.
 
 ## Install
 
@@ -80,7 +44,8 @@ Root resolution follows `--root`, then `SKCTL_ROOT`, then the root in
 
 ## Keep the library in Git
 
-After the first apply, initialize the root as a Git repository:
+Put the root under Git so the source and catalog travel between machines. skctl
+rebuilds `.build/` and remote clones, so both stay ignored:
 
 ```bash
 git -C ~/dev/skills init -b main
@@ -90,28 +55,8 @@ git -C ~/dev/skills remote add origin <repository-url>
 git -C ~/dev/skills push -u origin main
 ```
 
-Commit `skills/`, `commands/`, `instructions/`, `overlays/`, and
-`skills.config.json`. skctl rebuilds `.build/` and remote clones, so both stay out
-of version control. The upstream repository can be private or public.
-
-On another machine:
-
-```bash
-git clone <repository-url> ~/dev/skills
-skctl init ~/dev/skills
-skctl pull
-```
-
-`init` records the cloned root in machine-local config. `pull` fetches the remote
-catalogs recorded in `skills.config.json` and applies the library to that machine.
-
-If an older Git root already tracks `remotes/`, remove the cached clones once after
-upgrading:
-
-```bash
-git -C ~/dev/skills rm -r --cached remotes
-git -C ~/dev/skills commit -m "chore: stop tracking remote clones"
-```
+On another machine, clone the repository, then `skctl init ~/dev/skills` records the
+root and `skctl pull` applies the library.
 
 ## Build your catalog
 
