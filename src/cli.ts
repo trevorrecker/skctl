@@ -747,6 +747,12 @@ const destDispatch = (args: Args): CommandOutput => {
           : `unknown client for --as: ${args.as}`,
       );
     }
+    if (type === "cursor") {
+      throw new Error(
+        "cursor destinations are not supported yet — Cursor reads user rules from " +
+          "~/.cursor/rules/*.mdc, which lands with the skills and commands increment",
+      );
+    }
     if (destinations.some((dest) => dest.path === path)) {
       throw new Error(`already a destination: ${path}`);
     }

@@ -124,6 +124,13 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
   run("dest", "remove", extraHome);
   assert.equal(existsSync(extraInstructions), false);
 
+  assert.throws(
+    () => run("dest", "add", join(home, "cursor-home"), "--as", "cursor"),
+    (error: unknown) =>
+      error instanceof Error &&
+      /not supported yet/.test(`${(error as { stderr?: string }).stderr ?? error.message}`),
+  );
+
   const upstream = join(scratch, "upstream");
   const remoteSkill = join(upstream, "skills", "remote-only");
   mkdirSync(remoteSkill, { recursive: true });
