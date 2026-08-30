@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { importInstructions, syncInstructions } from "./instructions.js";
+import { adoptInstruction, importInstructions, syncInstructions } from "./instructions.js";
 import { doctor } from "./doctor.js";
 import { resolveSkillPaths } from "./paths.js";
 import type { SkillPaths } from "./paths.js";
@@ -91,6 +91,18 @@ test("apply replaces an old-style managed symlink with the compiled file", () =>
   assert.ok(actions.some((action) => action.detail === claude && action.kind === "replaced"));
   assert.equal(lstatSync(claude).isSymbolicLink(), false);
   assert.equal(readFileSync(claude, "utf-8"), "rules\n");
+});
+
+test("adoptInstruction takes over an existing file and returns its hash", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-instructions-"));
+  const file = join(home, "CLAUDE.md");
+  writeFileSync(file, "old\n");
+
+  const { action, hash } = adoptInstruction(file, "new\n", "claude", false);
+
+  assert.equal(action.kind, "replaced");
+  assert.equal(readFileSync(file, "utf-8"), "new\n");
+  assert.equal(hash.length, 64);
 });
 
 test("importInstructions adopts identical home files and creates the source, not targets", () => {
