@@ -185,17 +185,22 @@ Track one instruction source at `instructions/AGENTS.md`:
 
 ```bash
 skctl import instructions
-skctl instruction list
-skctl instruction add ~/.codex-work/AGENTS.md
-skctl instruction remove ~/.codex-work/AGENTS.md
+skctl dest add ~/.codex-work
+skctl dest list
+skctl dest remove ~/.codex-work
 ```
 
 Import adopts matching `~/AGENTS.md` and `~/CLAUDE.md` content when they agree and
 reports them when they differ, rather than guessing a merge. Apply resolves the source's
 `<!-- host:... -->` guards for each target and writes the file, so a `host:claude` block
 reaches `CLAUDE.md` but not the `AGENTS.md` a Codex or OpenCode reads. A target you edit by
-hand is reported as a conflict and left untouched. See [client paths](docs/clients/README.md)
-for each client and [surfaces and overlays](docs/surfaces.md) for the guard syntax.
+hand is reported as a conflict and left untouched.
+
+A destination is an additional place to materialize content beyond the primary home. `dest
+add <path>` detects the client from the directory and manages its instruction file; pass
+`--as claude|codex|opencode|cursor` only when detection cannot tell. See
+[client paths](docs/clients/README.md) for each client and
+[surfaces and overlays](docs/surfaces.md) for the guard syntax.
 
 ## Project a subset
 
@@ -278,7 +283,7 @@ skctl remote add <url> [alias] | remove <alias> | list
 skctl browse [alias|url]
 skctl pull [remote]
 skctl detach skill <name>
-skctl instruction list|add|remove [path]
+skctl dest add|list|remove [path]
 skctl project [apply]|init|status|remove
 skctl refresh
 skctl schedule install [hours]|status|remove

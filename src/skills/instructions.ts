@@ -100,6 +100,27 @@ export const syncInstructions = (
   return { actions, hashes: dryRun ? hashes : next };
 };
 
+// `dest add` is an explicit opt-in, so it takes over the target's instruction file even when
+// one already exists, then records the hash so later applies protect a hand-edit. Ongoing
+// apply never adopts; only this deliberate step does.
+export const adoptInstruction = (
+  file: string,
+  source: string,
+  surface: Surface,
+  dryRun: boolean,
+): { action: Action; hash: string } => {
+  const content = compileInstruction(source, surface);
+  const existed = existsSync(file);
+  if (!dryRun) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content, "utf-8");
+  }
+  return {
+    action: { kind: existed ? "replaced" : "created", detail: file, subject: basename(file) },
+    hash: hashInstruction(content),
+  };
+};
+
 export const removeInstructionLink = (
   target: string,
   recordedHash: string | undefined,

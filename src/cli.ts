@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -17,6 +17,13 @@ import {
   removeInstructionLink,
   syncInstructions,
 } from "./skills/instructions.js";
+import { adoptInstruction } from "./skills/instructions.js";
+import {
+  destinationInstructionFile,
+  detectType,
+  surfaceForClient,
+} from "./skills/destinations.js";
+import type { Destination } from "./skills/destinations.js";
 import { createCommand, createSkill } from "./skills/create.js";
 import { validateName } from "./skills/names.js";
 import {
@@ -59,10 +66,11 @@ import {
   loadConfig,
   markRemoteRefreshed,
   remoteRefreshDue,
+  resolveDestinations,
   resolveRoot,
   saveConfig,
+  setDestinations,
   setInstructionHashes,
-  setInstructionTarget,
   setTagActive,
 } from "./config.js";
 import { browse } from "./browse.js";
@@ -107,6 +115,7 @@ interface Args {
   hosts?: string;
   tags?: string;
   skills?: string;
+  as?: string;
   color?: boolean;
   dryRun: boolean;
   quiet: boolean;
@@ -183,6 +192,8 @@ const parseArgs = (argv: string[]): Args => {
     else if (token.startsWith("--tags=")) args.tags = value(token.slice("--tags=".length));
     else if (token === "--skills") args.skills = value();
     else if (token.startsWith("--skills=")) args.skills = value(token.slice("--skills=".length));
+    else if (token === "--as") args.as = value();
+    else if (token.startsWith("--as=")) args.as = value(token.slice("--as=".length));
     else if (token === "-o" || token === "--output") args.output = value();
     else if (token.startsWith("-o=")) args.output = value(token.slice("-o=".length));
     else if (token.startsWith("--output=")) args.output = value(token.slice("--output=".length));
@@ -201,14 +212,10 @@ const resolveScope = (
     return resolveProjectPaths(dir);
   }
   const { root } = resolveRoot({ flagRoot: args.root });
-  return resolveSkillPaths(
-    homedir(),
-    root,
-    undefined,
-    undefined,
-    undefined,
-    config.instructionTargets,
-  );
+  const instructionLinks = resolveDestinations(config)
+    .filter((dest) => dest.kinds.includes("instructions"))
+    .map(destinationInstructionFile);
+  return resolveSkillPaths(homedir(), root, undefined, undefined, undefined, instructionLinks);
 };
 
 type Resource = "skills" | "commands" | "remotes" | "tags";
@@ -699,80 +706,97 @@ const importDispatch = (args: Args): CommandOutput => {
   ]);
 };
 
-const instructionTargetPath = (value: string): string =>
+const resolveDestPath = (value: string): string =>
   value === "~"
     ? homedir()
     : value.startsWith("~/")
       ? resolve(homedir(), value.slice(2))
       : resolve(value);
 
-const instructionDispatch = (args: Args): CommandOutput => {
+const destDispatch = (args: Args): CommandOutput => {
   if (args.project !== undefined) {
-    throw new Error("instruction targets are machine-local and require global scope");
+    throw new Error("destinations are machine-local and require global scope");
   }
   const operation = args.positional[1] ?? "list";
   const config = loadConfig();
-  const paths = resolveScope(args, config);
-  const clientPaths = resolveScope(args, { ...config, instructionTargets: [] });
+  const destinations = resolveDestinations(config);
   if (operation === "list") {
-    const clientTargets = new Set(clientPaths.instructionLinks.map((entry) => entry.path));
-    const targets = paths.instructionLinks.map((target) => ({
-      target: target.path,
-      origin: clientTargets.has(target.path) ? "client" : "local",
-    }));
     return {
       text: renderDetails(
-        "instructions",
-        shortPath(paths.instructionsSource),
-        targets.map(
-          (entry) => [entry.origin, shortPath(entry.target)] satisfies DetailPair,
+        "destinations",
+        `${destinations.length} destination${destinations.length === 1 ? "" : "s"}`,
+        destinations.map(
+          (dest) => [dest.type, shortPath(dest.path)] satisfies DetailPair,
         ),
       ),
-      data: { source: paths.instructionsSource, targets },
+      data: { destinations },
     };
   }
   const value = args.positional[2];
   if (value === undefined || (operation !== "add" && operation !== "remove")) {
-    throw new Error("usage: skctl instruction list|add|remove [path]");
+    throw new Error("usage: skctl dest list|add|remove <path>");
   }
-  const target = instructionTargetPath(value);
-  if (paths.instructionImports.includes(target)) {
-    throw new Error(`${target} is a home import path and can duplicate hierarchy instructions`);
-  }
-  if (target === paths.instructionsSource) {
-    throw new Error("the instruction source cannot be its own target");
-  }
+  const path = resolveDestPath(value);
   if (operation === "add") {
-    if (clientPaths.instructionLinks.some((entry) => entry.path === target)) {
-      throw new Error(`instruction target is already managed for this client: ${target}`);
+    const type = args.as === undefined ? detectType(path) : surfaceForClient(args.as);
+    if (type === undefined) {
+      throw new Error(
+        args.as === undefined
+          ? `could not detect a client at ${path}; pass --as claude|codex|opencode|cursor`
+          : `unknown client for --as: ${args.as}`,
+      );
     }
-    const nextConfig = setInstructionTarget(config, target, true);
-    saveConfig(nextConfig);
+    if (type === "cursor") {
+      throw new Error(
+        "cursor destinations are not supported yet — Cursor reads user rules from " +
+          "~/.cursor/rules/*.mdc, which lands with the skills and commands increment",
+      );
+    }
+    if (destinations.some((dest) => dest.path === path)) {
+      throw new Error(`already a destination: ${path}`);
+    }
+    const destination: Destination = { path, type, kinds: ["instructions"] };
+    const next = setDestinations(config, [...destinations, destination]);
+    saveConfig(next);
+    const scope = resolveScope(args, next);
+    if (destination.kinds.includes("instructions") && existsSync(scope.instructionsSource)) {
+      const file = destinationInstructionFile(destination);
+      const { hash } = adoptInstruction(
+        file,
+        readFileSync(scope.instructionsSource, "utf-8"),
+        type,
+        false,
+      );
+      saveConfig(setInstructionHashes(next, { ...config.instructionHashes, [file]: hash }));
+    }
     return applyOutput(
-      applyResult(resolveScope(args, nextConfig), args, { dryRun: false }),
+      applyResult(scope, args, { dryRun: false }),
       args,
-      [`added instruction target: ${shortPath(target)}`],
+      [`added destination: ${shortPath(path)} (${type})`],
     );
   }
-  if (!(config.instructionTargets ?? []).includes(target)) {
-    throw new Error(`instruction target is not configured: ${target}`);
-  }
-  const action = clientPaths.instructionLinks.some((entry) => entry.path === target)
-    ? { kind: "ok", detail: target } satisfies Action
-    : removeInstructionLink(target, config.instructionHashes?.[target], false);
+  const target = destinations.find((dest) => dest.path === path);
+  if (target === undefined) throw new Error(`not a destination: ${path}`);
+  const file = destinationInstructionFile(target);
+  const action = removeInstructionLink(file, config.instructionHashes?.[file], false);
   const remainingHashes = { ...config.instructionHashes };
-  delete remainingHashes[target];
-  saveConfig(setInstructionHashes(setInstructionTarget(config, target, false), remainingHashes));
+  delete remainingHashes[file];
+  saveConfig(
+    setInstructionHashes(
+      setDestinations(config, destinations.filter((dest) => dest.path !== path)),
+      remainingHashes,
+    ),
+  );
   return applyOutput(
     {
-      verb: "instruction remove",
+      verb: "dest remove",
       dryRun: false,
-      root: paths.sourceRepo,
-      hosts: paths.commandHosts,
-      sections: [{ name: "instructions", actions: [action] }],
+      root: resolveScope(args, config).sourceRepo,
+      hosts: [...AllHosts],
+      sections: [{ name: "destinations", actions: [action] }],
     },
     args,
-    [`removed instruction target: ${shortPath(target)}`],
+    [`removed destination: ${shortPath(path)}`],
   );
 };
 
@@ -918,7 +942,7 @@ const configDispatch = (args: Args): CommandOutput => {
         )}`,
       ],
       ["active tags", config.activeTags ?? []],
-      ["instruction targets", (config.instructionTargets ?? []).map(shortPath)],
+      ["destinations", resolveDestinations(config).map((dest) => shortPath(dest.path))],
       [
         "remote refresh",
         config.remoteRefreshHours === undefined ? "off" : `${config.remoteRefreshHours}h`,
@@ -1224,14 +1248,10 @@ const browseDispatch = async (args: Args): Promise<CommandOutput> => {
 const globalScope = (args: Args): SkillPaths => {
   const config = loadConfig();
   const { root } = resolveRoot({ flagRoot: args.root });
-  return resolveSkillPaths(
-    homedir(),
-    root,
-    undefined,
-    undefined,
-    undefined,
-    config.instructionTargets,
-  );
+  const instructionLinks = resolveDestinations(config)
+    .filter((dest) => dest.kinds.includes("instructions"))
+    .map(destinationInstructionFile);
+  return resolveSkillPaths(homedir(), root, undefined, undefined, undefined, instructionLinks);
 };
 
 const projectReport = (
@@ -1384,9 +1404,10 @@ const dispatch = async (args: Args): Promise<CommandOutput> => {
       return toggleDispatch(args, false);
     case "import":
       return importDispatch(args);
-    case "instruction":
-    case "instructions":
-      return instructionDispatch(args);
+    case "dest":
+    case "destination":
+    case "destinations":
+      return destDispatch(args);
     case "schedule":
       return scheduleDispatch(args);
     case "status":

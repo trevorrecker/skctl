@@ -590,7 +590,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["apply", "reconcile the manifest into every host"],
       ["enable|disable skill|command|tag <name>", "toggle an entry, then apply"],
       ["tag|untag skill <name> <tag...>", "edit a skill's shared tags"],
-      ["instruction list|add|remove [path]", "manage machine-local instruction targets"],
+      ["dest add|list|remove [path]", "manage additional destinations for instructions"],
       ["config [set root|raycast|refresh <value>]", "show or update configuration; refresh also takes off"],
       ["refresh", "update root, remotes, and client targets"],
       ["schedule install [hours]|status|remove", "manage the background refresh job"],

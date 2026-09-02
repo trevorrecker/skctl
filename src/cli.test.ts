@@ -109,21 +109,27 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
   );
   assert.match(run("status"), /no issues/);
 
-  const extraInstructions = join(home, "client-home", "AGENTS.md");
-  run("instruction", "add", extraInstructions, "--no-raycast");
+  const extraHome = join(home, "client-home");
+  const extraInstructions = join(extraHome, "AGENTS.md");
+  run("dest", "add", extraHome, "--as", "codex", "--no-raycast");
   assert.equal(lstatSync(extraInstructions).isSymbolicLink(), false);
   assert.equal(readFileSync(extraInstructions, "utf-8"), "# Shared rules\n");
-  const listed: unknown = JSON.parse(run("instruction", "list", "-o", "json"));
+  const listed: unknown = JSON.parse(run("dest", "list", "-o", "json"));
   assert.ok(isRecord(listed));
-  assert.ok(Array.isArray(listed.targets));
-  const targets = listed.targets.filter(isRecord);
+  assert.ok(Array.isArray(listed.destinations));
+  const destinations = listed.destinations.filter(isRecord);
   assert.ok(
-    targets.some(
-      entry => entry.target === extraInstructions && entry.origin === "local",
-    ),
+    destinations.some((entry) => entry.path === extraHome && entry.type === "agents"),
   );
-  run("instruction", "remove", extraInstructions);
+  run("dest", "remove", extraHome);
   assert.equal(existsSync(extraInstructions), false);
+
+  assert.throws(
+    () => run("dest", "add", join(home, "cursor-home"), "--as", "cursor"),
+    (error: unknown) =>
+      error instanceof Error &&
+      /not supported yet/.test(`${(error as { stderr?: string }).stderr ?? error.message}`),
+  );
 
   const upstream = join(scratch, "upstream");
   const remoteSkill = join(upstream, "skills", "remote-only");

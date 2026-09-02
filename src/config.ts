@@ -3,6 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isRecord } from "./record.js";
 import { defaultManifest, saveManifest } from "./skills/manifest.js";
+import { destinationFromInstructionTarget } from "./skills/destinations.js";
+import { AllSurfaces } from "./skills/types.js";
+import type { Destination, DestinationKind } from "./skills/destinations.js";
+import type { Surface } from "./skills/types.js";
 
 export interface SkctlConfig {
   root?: string;
@@ -10,10 +14,14 @@ export interface SkctlConfig {
   raycastDir?: string;
   activeTags?: string[];
   instructionTargets?: string[];
+  destinations?: Destination[];
   instructionHashes?: Record<string, string>;
   remoteRefreshHours?: number;
   remoteRefreshes?: Record<string, string>;
 }
+
+const isSurface = (value: unknown): value is Surface =>
+  AllSurfaces.some((surface) => surface === value);
 
 export type RootSource = "flag" | "env" | "config";
 
@@ -80,6 +88,15 @@ export const loadConfig = (path: string = configPath()): SkctlConfig => {
         ),
       );
     }
+    if (Array.isArray(parsed.destinations)) {
+      config.destinations = parsed.destinations.flatMap((raw): Destination[] => {
+        if (!isRecord(raw) || typeof raw.path !== "string" || !isSurface(raw.type)) return [];
+        const kinds = Array.isArray(raw.kinds)
+          ? raw.kinds.filter((kind): kind is DestinationKind => kind === "instructions")
+          : [];
+        return [{ path: raw.path, type: raw.type, kinds: kinds.length > 0 ? kinds : ["instructions"] }];
+      });
+    }
     return config;
   } catch {
     return {};
@@ -112,6 +129,21 @@ export const setInstructionHashes = (
   config: SkctlConfig,
   hashes: Record<string, string>,
 ): SkctlConfig => ({ ...config, instructionHashes: hashes });
+
+// The effective destinations, upgrading a legacy `instructionTargets` list on read so an old
+// config keeps working until the next write finalizes the move.
+export const resolveDestinations = (config: SkctlConfig): Destination[] =>
+  config.destinations ??
+  (config.instructionTargets ?? []).map(destinationFromInstructionTarget);
+
+export const setDestinations = (
+  config: SkctlConfig,
+  destinations: Destination[],
+): SkctlConfig => {
+  const next = { ...config, destinations };
+  delete next.instructionTargets;
+  return next;
+};
 
 export const remoteRefreshDue = (
   config: SkctlConfig,
