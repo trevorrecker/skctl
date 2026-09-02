@@ -140,14 +140,18 @@ const groupActions = (actions: readonly Action[]): ActionGroup[] => {
 const leadAction = (group: ActionGroup): Action =>
   group.actions.find((action) => action.kind === group.kind) ?? group.actions[0];
 
-// Rows name the destinations a reader acts on: the client directories, not the internal
-// .build/ copies every skill also links through. A single destination reads clearest as
-// its full path; several read clearest as the set of directories, since the subject
-// already names the file. Fall back to the build paths only when nothing else remains.
+// Rows name the destinations a reader acts on: the client directories, never the internal
+// .build/ copies every skill links through. A recompiled skill whose client links are
+// unchanged has no changed destination of its own kind, so point at where it lives for the
+// reader instead. A single destination reads clearest as its full path; several read
+// clearest as the set of directories, since the subject already names the file.
 const destination = (group: ActionGroup): string => {
-  const relevant = group.actions.filter((action) => action.kind === group.kind);
-  const named = relevant.filter((action) => !action.detail.includes("/.build/"));
-  const shown = named.length > 0 ? named : relevant;
+  const outsideBuild = (action: Action): boolean => !action.detail.includes("/.build/");
+  const relevant = group.actions.filter(
+    (action) => action.kind === group.kind && outsideBuild(action),
+  );
+  const shown = relevant.length > 0 ? relevant : group.actions.filter(outsideBuild);
+  if (shown.length === 0) return "";
   if (shown.length === 1) return sanitizeTerminalText(shorten(shown[0].detail));
   const dirs = [
     ...new Set(
