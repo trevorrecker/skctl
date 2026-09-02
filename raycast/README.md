@@ -19,7 +19,7 @@ appear immediately.
 | Command | What it does |
 |---------|--------------|
 | Apply Skills | `skctl apply` materializes the manifest into every host |
-| List Skills | `skctl get skills` shows state, hosts, and paste flags |
+| List Skills | `skctl get skills` shows availability, hosts, and remotes |
 | Paste Skill | pastes a skill's body into the focused input (skill dropdown) |
 | Describe Skill | shows a skill's state, hosts, and description (skill dropdown) |
 
@@ -27,8 +27,8 @@ Set a Raycast alias (e.g. `sk`) or hotkey on **Paste Skill** from its command se
 
 ## Paste dropdown & the `paste` flag
 
-The dropdown lists every skill; a skill meant primarily for pasting can declare it in
-frontmatter, which surfaces it first and marks it `[paste]`:
+The dropdown lists every skill. A skill meant primarily for pasting can declare it in
+frontmatter, which surfaces it first:
 
 ```md
 ---
@@ -38,9 +38,9 @@ paste: true
 ---
 ```
 
-`skctl get skills --paste` filters to these. A common pattern is a paste-only block
-kept out of every client with `"enabled": false` in `skills.config.json` and remains
-available for pasting.
+`skctl get skills --paste` filters to these. Disabling one keeps it available as a
+paste-only skill, shown with the partial `◐` state instead of the enabled `●` or
+disabled `○` states.
 
 The scripts set PATH because Raycast runs with a minimal environment. They
 search common local, Homebrew, system, and nvm paths for `skctl` and `node`.

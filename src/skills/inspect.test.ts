@@ -27,7 +27,7 @@ const seed = (home: string): void => {
   );
 };
 
-test("listSkills reports state and the paste flag; --paste filters", () => {
+test("listSkills reports availability and the paste flag; --paste filters", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-inspect-"));
   seed(home);
   const paths = resolveSkillPaths(home);
@@ -35,13 +35,24 @@ test("listSkills reports state and the paste flag; --paste filters", () => {
 
   const all = listSkills(paths, false);
   assert.deepEqual(
-    all.map((s) => [s.name, s.enabled, s.paste]),
+    all.map((s) => [s.name, s.availability, s.enabled, s.paste]),
     [
-      ["normal", false, false],
-      ["snippet", true, true],
+      ["normal", "disabled", false, false],
+      ["snippet", "enabled", true, true],
     ],
   );
   assert.deepEqual(listSkills(paths, true).map((s) => s.name), ["snippet"]);
+});
+
+test("a disabled paste skill reports paste-only availability", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-inspect-"));
+  seed(home);
+  const paths = resolveSkillPaths(home);
+  saveManifest(paths.manifestPath, setEnabled(defaultManifest(), "skills", "snippet", false));
+
+  const snippet = listSkills(paths).find(skill => skill.name === "snippet");
+
+  assert.equal(snippet?.availability, "paste-only");
 });
 
 test("skillContent returns body by default and the whole file with raw", () => {
