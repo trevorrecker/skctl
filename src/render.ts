@@ -358,6 +358,12 @@ const table = (
 const stateMark = (enabled: boolean): string =>
   enabled ? green(Marks.on) : dim(Marks.off);
 
+const skillStateMark = (availability: SkillInfo["availability"]): string => {
+  if (availability === "enabled") return green(Marks.on);
+  if (availability === "paste-only") return yellow(Marks.partial);
+  return dim(Marks.off);
+};
+
 const listFooter = (total: number, word: string, enabled: number): string =>
   joinDots([
     plural(total, word),
@@ -365,20 +371,33 @@ const listFooter = (total: number, word: string, enabled: number): string =>
     total - enabled === 0 ? "" : `${dim(Marks.off)} ${dim(`${total - enabled} disabled`)}`,
   ]);
 
+const skillListFooter = (skills: readonly SkillInfo[]): string => {
+  const enabled = skills.filter(skill => skill.availability === "enabled").length;
+  const pasteOnly = skills.filter(skill => skill.availability === "paste-only").length;
+  const disabled = skills.length - enabled - pasteOnly;
+  return joinDots([
+    plural(skills.length, "skill"),
+    `${green(Marks.on)} ${dim(`${enabled} enabled`)}`,
+    pasteOnly === 0
+      ? ""
+      : `${yellow(Marks.partial)} ${dim(`${pasteOnly} paste-only`)}`,
+    disabled === 0 ? "" : `${dim(Marks.off)} ${dim(`${disabled} disabled`)}`,
+  ]);
+};
+
 export const renderSkills = (skills: readonly SkillInfo[], scope: string): string => {
   if (skills.length === 0) return report([dim("no skills")]);
   const rows = skills.map((skill) => [
-    stateMark(skill.enabled),
-    skill.enabled ? skill.name : dim(skill.name),
+    skillStateMark(skill.availability),
+    skill.availability === "disabled" ? dim(skill.name) : skill.name,
     dim(skill.hosts.join(",")),
     skill.tags.join(","),
     skill.remote === undefined ? "" : cyan(skill.remote),
-    skill.paste ? dim("paste") : "",
   ]);
   return report(
     [title("skills", dim(scope))],
-    table(["", "NAME", "HOSTS", "TAGS", "REMOTE", "FLAGS"], rows),
-    [listFooter(skills.length, "skill", skills.filter((skill) => skill.enabled).length)],
+    table(["", "NAME", "HOSTS", "TAGS", "REMOTE"], rows),
+    [skillListFooter(skills)],
   );
 };
 

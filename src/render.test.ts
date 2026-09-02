@@ -5,11 +5,13 @@ import {
   conflictCount,
   renderApply,
   renderRemoteAdded,
+  renderSkills,
   renderStatus,
 } from "./render.js";
 import { setColor } from "./ui.js";
 import type { ApplyResult } from "./render.js";
 import type { DoctorReport } from "./skills/doctor.js";
+import type { SkillInfo } from "./skills/inspect.js";
 
 setColor(false);
 
@@ -111,6 +113,40 @@ test("status separates issues from notes and names the totals", () => {
   assert.match(text, /· {2}untracked {2}loose {2}run `skctl import`/);
   assert.match(text, /✖ 1 issue · 1 note/);
   assert.match(renderStatus({ ...report, issues: [] }, "/repo"), /✔ no issues/);
+});
+
+const listedSkill = (
+  name: string,
+  availability: SkillInfo["availability"],
+  paste: boolean,
+): SkillInfo => ({
+  name,
+  enabled: availability === "enabled",
+  availability,
+  hosts: ["claude", "codex"],
+  surfaces: ["claude", "agents"],
+  spill: [],
+  tags: [],
+  paste,
+  description: "",
+  path: `/repo/skills/${name}/SKILL.md`,
+});
+
+test("skills use distinct marks for enabled, paste-only, and disabled states", () => {
+  const text = renderSkills(
+    [
+      listedSkill("active", "enabled", true),
+      listedSkill("snippet", "paste-only", true),
+      listedSkill("retired", "disabled", false),
+    ],
+    "/repo",
+  );
+
+  assert.match(text, /● {2}active/);
+  assert.match(text, /◐ {2}snippet/);
+  assert.match(text, /○ {2}retired/);
+  assert.match(text, /3 skills · ● 1 enabled · ◐ 1 paste-only · ○ 1 disabled/);
+  assert.doesNotMatch(text, /FLAGS| {2}paste$/m);
 });
 
 const fanOut = (): ApplyResult => ({

@@ -68,8 +68,8 @@ const skillDropdown = (skills: SkillInfo[]): string => {
   const data = skills.map((skill) => {
     const markers = [
       skill.remote ? `[${skill.remote}]` : "",
-      skill.paste ? "[paste]" : "",
-      skill.enabled ? "" : "(disabled)",
+      skill.availability === "paste-only" ? "◐" : "",
+      skill.availability === "disabled" ? "(disabled)" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -116,7 +116,7 @@ export const generateRaycastScripts = (
       title: "List Skills",
       mode: "fullOutput",
       icon: "📜",
-      description: "Show every skill with its state, target hosts, and paste flag",
+      description: "Show every skill with its availability, target hosts, and remote",
       body: "skctl get skills",
     }),
     render({

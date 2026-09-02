@@ -9,9 +9,12 @@ import { listCommandNames, listSkillNames } from "./sync.js";
 import type { Host, SkillsManifest, Surface } from "./types.js";
 import type { SkillPaths } from "./paths.js";
 
+export type SkillAvailability = "enabled" | "paste-only" | "disabled";
+
 export interface SkillInfo {
   name: string;
   enabled: boolean;
+  availability: SkillAvailability;
   hosts: Host[];
   surfaces: Surface[];
   spill: Host[];
@@ -83,6 +86,7 @@ export const skillInfo = (
   const data = readFrontmatter(path);
   const overlay = loadOverlays(paths).overlays.get(name);
   const source = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const paste = data.paste === true;
   const { surfaces, spill } = planSurfaces(
     resolved.hosts,
     variantSurfaces(source, overlay),
@@ -90,12 +94,13 @@ export const skillInfo = (
   return {
     name,
     enabled: resolved.enabled,
+    availability: resolved.enabled ? "enabled" : paste ? "paste-only" : "disabled",
     hosts: resolved.hosts,
     surfaces,
     spill,
     overlay: overlay?.path,
     tags: resolved.tags,
-    paste: data.paste === true,
+    paste,
     description: typeof data.description === "string" ? data.description : "",
     remote,
     path,

@@ -355,7 +355,7 @@ const describeSkill = (info: SkillInfo): string =>
     "skill",
     info.name,
     [
-      ["enabled", yesNo(info.enabled)],
+      ["availability", info.availability],
       ["hosts", info.hosts.join(", ")],
       [
         "surfaces",
@@ -368,7 +368,6 @@ const describeSkill = (info: SkillInfo): string =>
       ...(info.overlay === undefined
         ? []
         : [["overlay", shortPath(info.overlay)] satisfies DetailPair]),
-      ["paste", yesNo(info.paste)],
       ["path", shortPath(info.path)],
     ],
     info.description || dim("(no description)"),

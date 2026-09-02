@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { defaultManifest, saveManifest, setEnabled } from "./skills/manifest.js";
 import { resolveSkillPaths } from "./skills/paths.js";
 import { generateRaycastScripts, syncRaycast } from "./raycast.js";
 
@@ -33,17 +34,26 @@ test("generateRaycastScripts bakes the skill list into the paste dropdown", () =
   assert.match(content, /"value":"commit"/);
 });
 
-test("paste-flagged skills sort first and carry the paste marker", () => {
+test("paste-flagged skills sort first without marking enabled skills as paste-only", () => {
   const home = mkdtempSync(join(tmpdir(), "skctl-raycast-"));
   seedSkill(home, "alpha");
   seedSkill(home, "zeta", true);
 
   const content = pasteScript(home);
-  assert.match(content, /zeta {2}\[paste\]/);
+  assert.doesNotMatch(content, /\[paste\]/);
   assert.ok(
     content.indexOf('"value":"zeta"') < content.indexOf('"value":"alpha"'),
     "the paste-flagged skill should come first in the dropdown",
   );
+});
+
+test("a disabled paste skill carries the partial marker", () => {
+  const home = mkdtempSync(join(tmpdir(), "skctl-raycast-"));
+  seedSkill(home, "snippet", true);
+  const paths = resolveSkillPaths(home);
+  saveManifest(paths.manifestPath, setEnabled(defaultManifest(), "skills", "snippet", false));
+
+  assert.match(pasteScript(home), /snippet {2}◐/);
 });
 
 test("every script forces a UTF-8 locale so pbcopy preserves non-ASCII bodies", () => {
