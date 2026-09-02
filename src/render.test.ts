@@ -167,6 +167,26 @@ test("the change-log row names client directories, not the internal .build/ copi
   assert.doesNotMatch(text, /\.build/);
 });
 
+test("a build-only recompile points at the client dirs, not the .build copies", () => {
+  const rebuilt: ApplyResult = {
+    ...fanOut(),
+    sections: [
+      {
+        name: "skills",
+        actions: [
+          { kind: "replaced", detail: "/repo/.build/claude/slop-audit/SKILL.md", subject: "slop-audit" },
+          { kind: "replaced", detail: "/repo/.build/agents/slop-audit/SKILL.md", subject: "slop-audit" },
+          { kind: "ok", detail: "/home/.claude/skills/slop-audit", subject: "slop-audit" },
+          { kind: "ok", detail: "/home/.agents/skills/slop-audit", subject: "slop-audit" },
+        ],
+      },
+    ],
+  };
+  const text = renderApply(rebuilt);
+  assert.match(text, /~ {2}skills {2}slop-audit {2}\/home\/\.claude\/skills, \/home\/\.agents\/skills/);
+  assert.doesNotMatch(text, /\.build/);
+});
+
 test("one thing written to several places is a single change-log row", () => {
   const text = renderApply(fanOut());
   assert.match(text, /\+ {2}skills {2}bro {2}\/home\/\.agents\/skills, \/home\/\.claude\/skills/);
