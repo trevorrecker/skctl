@@ -1,11 +1,13 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isSymlink, pathPresent, symlinkTarget } from "./fsx.js";
+import { compileInstruction, hashInstruction } from "./instructions.js";
 import { loadManifest } from "./manifest.js";
 import { loadOverlays } from "./overlays.js";
 import { resolveRemoteSkills, selectorName } from "./remotes.js";
 import { lockedSkillNames } from "./skill-lock.js";
 import { GeneratedIgnoreEntries, listCommandNames, listSkillNames } from "./sync.js";
+import { surfaceForInstructionFile } from "./paths.js";
 import { AllSurfaces } from "./types.js";
 import type { Surface } from "./types.js";
 import type { SkillPaths } from "./paths.js";
@@ -181,7 +183,11 @@ const scanGeneratedIgnores = (paths: SkillPaths, report: DoctorReport): void => 
   }
 };
 
-const scanInstructions = (paths: SkillPaths, report: DoctorReport): void => {
+const scanInstructions = (
+  paths: SkillPaths,
+  hashes: Record<string, string>,
+  report: DoctorReport,
+): void => {
   if (
     paths.instructionImports.length === 0 &&
     paths.instructionLinks.length === 0
@@ -199,11 +205,13 @@ const scanInstructions = (paths: SkillPaths, report: DoctorReport): void => {
     }
     return;
   }
-  const sourceContent = readFileSync(paths.instructionsSource, "utf-8");
+  const source = readFileSync(paths.instructionsSource, "utf-8");
   for (const path of importPaths) {
     if (!existsSync(path) || lstatSync(path).isDirectory()) {
       report.issues.push({ label: "unreadable home instructions", detail: path });
-    } else if (readFileSync(path, "utf-8") === sourceContent) {
+    } else if (
+      readFileSync(path, "utf-8") === compileInstruction(source, surfaceForInstructionFile(path))
+    ) {
       report.issues.push({
         label: "duplicate home instructions",
         detail: path,
@@ -213,23 +221,29 @@ const scanInstructions = (paths: SkillPaths, report: DoctorReport): void => {
       report.issues.push({ label: "conflicting home instructions", detail: path });
     }
   }
-  for (const path of new Set(paths.instructionLinks)) {
-    if (!pathPresent(path)) {
-      report.issues.push({ label: "missing instruction link", detail: path });
+  for (const target of paths.instructionLinks) {
+    if (!existsSync(target.path)) {
+      report.issues.push({ label: "missing instruction", detail: target.path });
       continue;
     }
-    const expected = relative(dirname(path), paths.instructionsSource);
-    if (!isSymlink(path) || symlinkTarget(path) !== expected) {
+    const current = readFileSync(target.path, "utf-8");
+    if (current === compileInstruction(source, target.surface)) continue;
+    if (hashes[target.path] !== undefined && hashInstruction(current) === hashes[target.path]) {
       report.issues.push({
-        label: "drift",
-        detail: path,
-        hint: `does not link to ${paths.instructionsSource}`,
+        label: "instruction drift",
+        detail: target.path,
+        hint: "run `skctl apply`",
       });
+    } else {
+      report.issues.push({ label: "hand-edited instruction", detail: target.path });
     }
   }
 };
 
-export const doctor = (paths: SkillPaths): DoctorReport => {
+export const doctor = (
+  paths: SkillPaths,
+  instructionHashes: Record<string, string> = {},
+): DoctorReport => {
   const report: DoctorReport = {
     sourceSkillCount: listSkillNames(paths.sourceSkills).length,
     sourceCommandCount: listCommandNames(paths.sourceCommands).length,
@@ -244,7 +258,7 @@ export const doctor = (paths: SkillPaths): DoctorReport => {
     if (surface !== "agents" || paths.scope !== "global") scanSurfaceLinks(paths, surface, report);
   }
   if (paths.scope === "global") scanAgentsSkills(paths, report);
-  scanInstructions(paths, report);
+  scanInstructions(paths, instructionHashes, report);
   scanOrphans(paths, report);
   scanGeneratedIgnores(paths, report);
   return report;

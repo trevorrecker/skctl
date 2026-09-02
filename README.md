@@ -190,9 +190,12 @@ skctl instruction add ~/.codex-work/AGENTS.md
 skctl instruction remove ~/.codex-work/AGENTS.md
 ```
 
-Import can adopt matching `~/AGENTS.md` or `~/CLAUDE.md` content. Apply links the
-tracked source into the configured user instruction paths and any additional
-machine-local targets. See [client paths](docs/clients/README.md) for each client.
+Import adopts matching `~/AGENTS.md` and `~/CLAUDE.md` content when they agree and
+reports them when they differ, rather than guessing a merge. Apply resolves the source's
+`<!-- host:... -->` guards for each target and writes the file, so a `host:claude` block
+reaches `CLAUDE.md` but not the `AGENTS.md` a Codex or OpenCode reads. A target you edit by
+hand is reported as a conflict and left untouched. See [client paths](docs/clients/README.md)
+for each client and [surfaces and overlays](docs/surfaces.md) for the guard syntax.
 
 ## Project a subset
 

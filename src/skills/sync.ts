@@ -22,6 +22,7 @@ import type { SkillPaths } from "./paths.js";
 export interface SyncReport {
   dryRun: boolean;
   instructions: Action[];
+  instructionHashes: Record<string, string>;
   skills: Action[];
   commands: Action[];
 }
@@ -209,8 +210,9 @@ export const sync = (
   manifest: SkillsManifest = loadManifest(paths.manifestPath),
   dryRun = false,
   activeTags: readonly string[] = [],
+  instructionHashes: Record<string, string> = {},
 ): SyncReport => {
-  const instructions = syncInstructions(paths, dryRun);
+  const instructions = syncInstructions(paths, dryRun, instructionHashes);
   const { overlays, problems } = loadOverlays(paths);
   const built = new Map<Surface, Set<string>>();
   ensureGeneratedIgnored(paths, dryRun);
@@ -290,5 +292,11 @@ export const sync = (
   );
   commands.push(...pruneOrphanCommands(paths, new Set(commandNames), dryRun));
 
-  return { dryRun, instructions, skills, commands };
+  return {
+    dryRun,
+    instructions: instructions.actions,
+    instructionHashes: instructions.hashes,
+    skills,
+    commands,
+  };
 };
