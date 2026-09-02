@@ -1,5 +1,38 @@
 # @trevorrecker/skctl
 
+## 0.5.0
+
+### Minor Changes
+
+- 0b7cb5e: feat(instructions): compile instructions per host
+  
+  `skctl apply` now resolves the `<!-- host:... -->` guards in `instructions/AGENTS.md` for
+  each target and writes the file, so a `host:claude` block reaches `CLAUDE.md` but not the
+  `AGENTS.md` that Codex or OpenCode reads. Targets are real files rather than symlinks: skctl
+  records the hash of what it wrote and leaves a hand-edited target untouched, reporting it as
+  a conflict. `import instructions` consolidates matching home files and reports divergent ones
+  instead of guessing a merge, and machine-local `instruction add` targets infer their host
+  from the filename.
+- 01c8fb6: feat(dest): manage additional destinations for instructions
+  
+  `skctl dest add <path>` registers an additional place to materialize instructions and
+  detects the client from the directory, so `--as` is only needed when detection cannot tell.
+  `dest list` and `dest remove` round it out. Adding a destination adopts any instruction file
+  already there; later applies resolve the source's host guards, write the file in place, and
+  report a hand-edit as a conflict instead of clobbering it.
+  
+  This replaces the `skctl instruction add/list/remove` commands; existing machine-local
+  instruction targets migrate into destinations automatically on the next run.
+
+### Patch Changes
+
+- 5705ea8: fix(cli): keep internal .build/ paths out of apply output
+  
+  A recompiled skill whose client links did not move now names its client directories in
+  the change row, instead of falling back to the internal `.build/` copies it compiles
+  through.
+- 0e7b4e8: fix(skills): distinguish paste-only availability
+
 ## 0.4.0
 
 ### Minor Changes
