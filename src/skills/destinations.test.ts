@@ -32,37 +32,52 @@ test("surfaceForClient maps client names, codex onto the agents surface", () => 
 });
 
 test("destinationInstructionFile picks CLAUDE.md only for claude", () => {
+  const destination = join(tmpdir(), "skctl-dest");
   assert.equal(
-    destinationInstructionFile({ path: "/x", type: "claude", kinds: ["instructions"] }),
-    "/x/CLAUDE.md",
+    destinationInstructionFile({ path: destination, type: "claude", kinds: ["instructions"] }),
+    join(destination, "CLAUDE.md"),
   );
   assert.equal(
-    destinationInstructionFile({ path: "/x", type: "agents", kinds: ["instructions"] }),
-    "/x/AGENTS.md",
+    destinationInstructionFile({ path: destination, type: "agents", kinds: ["instructions"] }),
+    join(destination, "AGENTS.md"),
   );
 });
 
 test("legacy instruction targets migrate into destinations on read", () => {
+  const home = join(tmpdir(), "skctl-legacy-home");
+  const codex = join(home, ".codex");
+  const claude = join(home, ".claude_t3");
+  const codexTarget = join(codex, "AGENTS.md");
   const destinations = resolveDestinations({
-    instructionTargets: ["/home/.codex/AGENTS.md", "/home/.claude_t3/CLAUDE.md"],
+    instructionTargets: [codexTarget, join(claude, "CLAUDE.md")],
   });
   assert.deepEqual(destinations, [
-    { path: "/home/.codex", type: "agents", kinds: ["instructions"] },
-    { path: "/home/.claude_t3", type: "claude", kinds: ["instructions"] },
+    { path: codex, type: "agents", kinds: ["instructions"] },
+    { path: claude, type: "claude", kinds: ["instructions"] },
   ]);
-  assert.equal(destinationInstructionFile(destinations[0]!), "/home/.codex/AGENTS.md");
+  assert.equal(destinationInstructionFile(destinations[0]!), codexTarget);
 });
 
 test("resolveDestinations prefers explicit destinations over legacy targets", () => {
-  const dest = { path: "/a", type: "claude" as const, kinds: ["instructions" as const] };
+  const home = join(tmpdir(), "skctl-explicit-home");
+  const dest = {
+    path: join(home, ".claude"),
+    type: "claude" as const,
+    kinds: ["instructions" as const],
+  };
   assert.deepEqual(
-    resolveDestinations({ destinations: [dest], instructionTargets: ["/home/.codex/AGENTS.md"] }),
+    resolveDestinations({
+      destinations: [dest],
+      instructionTargets: [join(home, ".codex", "AGENTS.md")],
+    }),
     [dest],
   );
 });
 
 test("setDestinations finalizes the migration by dropping instructionTargets", () => {
-  const config = { instructionTargets: ["/home/.codex/AGENTS.md"] };
+  const config = {
+    instructionTargets: [join(tmpdir(), "skctl-migration-home", ".codex", "AGENTS.md")],
+  };
   const next = setDestinations(config, resolveDestinations(config));
   assert.equal(next.instructionTargets, undefined);
   assert.equal(next.destinations?.length, 1);
