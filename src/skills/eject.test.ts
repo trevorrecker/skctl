@@ -141,6 +141,8 @@ test("another machine hands an ejected skill back from git history on its next a
 
   const handed = applyManifest(second.paths);
 
+  const handback = handed.skills.find((action) => action.subject === "mine" && action.kind !== "removed");
+  assert.match(handback?.note ?? "", /^ejected elsewhere, handed back from [0-9a-f]+$/);
   const copy = join(second.paths.surfaceDirs.agents, "mine");
   assert.equal(lstatSync(copy).isSymbolicLink(), false);
   assert.ok(existsSync(join(copy, "scripts", "run.js")));
@@ -148,7 +150,6 @@ test("another machine hands an ejected skill back from git history on its next a
   assert.doesNotMatch(handedBody, /claude only/);
   assert.match(handedBody, /overlaid/);
   assert.equal(pathPresent(join(second.paths.surfaceDirs.claude, "mine")), false);
-  assert.ok(handed.skills.some((action) => action.note?.startsWith("ejected elsewhere, handed back from ")));
 
   const again = applyManifest(second.paths);
   assert.equal(again.skills.some((action) => action.subject === "mine"), false);

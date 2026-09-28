@@ -54,7 +54,9 @@ export const restoreFromHistory = (
     // writes file modes and links the way git stored them without needing tar on PATH.
     const env = { ...process.env, GIT_INDEX_FILE: join(scratch, "index") };
     git(repo, ["read-tree", `${revision}:${skillPath}`], env);
-    git(repo, ["checkout-index", "--all", `--prefix=${skillDir}${sep}`], env);
+    // The prefix is prepended to each path as a raw string, and Git for Windows only treats
+    // forward slashes in it as separators reliably.
+    git(repo, ["checkout-index", "--all", `--prefix=${skillDir.split(sep).join("/")}/`], env);
     const overlayFile = join(scratch, `${name}.md`);
     if (exists(repo, revision, overlayPath)) {
       writeFileSync(overlayFile, git(repo, ["show", `${revision}:${overlayPath}`]), "utf-8");
