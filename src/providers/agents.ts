@@ -13,5 +13,10 @@ export const Agents: Provider = {
   frontmatterKeys: AgentSkillsSpecKeys,
   userSkillsDir: (home) => join(home.home, ".agents", "skills"),
   projectSkillsDir: (root) => join(root, ".agents", "skills"),
+  builtins: {
+    host: "codex",
+    dirs: (home) => [join(home.codexHome, "skills", ".system")],
+    markerKeys: [],
+  },
   docs: "https://learn.chatgpt.com/docs/build-skills",
 };

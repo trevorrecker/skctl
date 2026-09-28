@@ -47,3 +47,16 @@ export const projectSkillsDirs = (root: string): Record<Surface, string> =>
     opencode: OpenCode.projectSkillsDir(root),
     cursor: Cursor.projectSkillsDir(root),
   });
+
+export interface BuiltinSource {
+  host: Host;
+  dirs: string[];
+  markerKeys: readonly string[];
+}
+
+export const builtinSources = (home: ProviderHome): BuiltinSource[] =>
+  Providers.flatMap(({ builtins }) =>
+    builtins === undefined
+      ? []
+      : [{ host: builtins.host, dirs: builtins.dirs(home), markerKeys: builtins.markerKeys }],
+  );

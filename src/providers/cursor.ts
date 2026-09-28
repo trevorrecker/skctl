@@ -20,5 +20,15 @@ export const Cursor: Provider = {
   ],
   userSkillsDir: (home) => join(home.cursorConfigDir, "skills"),
   projectSkillsDir: (root) => join(root, ".cursor", "skills"),
+  // skills-cursor is where Cursor syncs the skills it ships; .cursor-user-skills is the
+  // layout older releases used and still holds skills on machines that upgraded.
+  builtins: {
+    host: "cursor",
+    dirs: (home) => [
+      join(home.cursorConfigDir, "skills-cursor"),
+      join(home.cursorConfigDir, ".cursor-user-skills", "skills-cursor"),
+    ],
+    markerKeys: ["environments", "disabled-environments"],
+  },
   docs: "https://cursor.com/docs/skills",
 };

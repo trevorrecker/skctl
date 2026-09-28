@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -80,6 +81,36 @@ export const planSkillBuild = (
       surfaces.map((surface) => [surface, compileSkill(name, source, surface, overlay)]),
     ),
   };
+};
+
+// For a skill skctl is handing off rather than serving: SKILL.md compiled for the surface
+// and every bundled file copied, so nothing links back into a source that is about to go.
+// Returns the siblings left out because they point outside the skill.
+export const writeStandaloneSkill = (
+  name: string,
+  sourceDir: string,
+  surface: Surface,
+  overlay: Overlay | undefined,
+  dest: string,
+): string[] => {
+  const source = readFileSync(join(sourceDir, skillFile), "utf-8");
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(
+    join(dest, skillFile),
+    compileSkill(name, source, surface, overlay).content,
+    "utf-8",
+  );
+  const skipped: string[] = [];
+  for (const entry of readdirSync(sourceDir)) {
+    if (entry === skillFile) continue;
+    const path = join(sourceDir, entry);
+    if (bundledFileProblem(sourceDir, path) !== undefined) {
+      skipped.push(entry);
+      continue;
+    }
+    cpSync(path, join(dest, entry), { recursive: true, dereference: true });
+  }
+  return skipped;
 };
 
 const writeFile = (dest: string, content: string, dryRun: boolean): Action => {

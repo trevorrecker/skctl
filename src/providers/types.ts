@@ -22,7 +22,17 @@ export interface Provider {
   frontmatterKeys: readonly string[];
   userSkillsDir: (home: ProviderHome) => string;
   projectSkillsDir: (root: string) => string;
+  // Skills the host ships itself. skctl never imports or serves a copy of one of these.
+  builtins?: HostBuiltins;
   docs: string;
+}
+
+export interface HostBuiltins {
+  host: Host;
+  dirs: (home: ProviderHome) => string[];
+  // Frontmatter only the host's own skills carry. A copy another tool migrated out of the
+  // host's directory keeps these keys even when its name is no longer listed there.
+  markerKeys: readonly string[];
 }
 
 // The portable Agent Skills baseline shared by providers that implement the specification.
