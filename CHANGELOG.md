@@ -14,7 +14,7 @@
   A host built-in goes back to its host. Any other skill is written to `~/.agents/skills` as a
   real directory. `eject --builtins` does this for every source skill that shadows a
   built-in. Other machines hand an ejected skill back on their next `apply`, restoring it
-  from the root's git history, and `doctor` reports source skills that shadow a host
+  from the root's git history, and `skctl status` reports source skills that shadow a host
   built-in.
 
 ## 0.5.0
