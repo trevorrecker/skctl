@@ -30,9 +30,9 @@ appears later in the merged instructions. Skctl manages the config-directory fil
 and leaves `~/CLAUDE.md` absent. `skctl import instructions` can adopt a matching home
 file, and `skctl status` reports one that remains beside the tracked source.
 
-Claude Code reads `CLAUDE.md`. It does not use `AGENTS.md` directly. A symlink from a
-Claude path to `instructions/AGENTS.md` gives it the same content without maintaining
-a second source.
+Claude Code reads `CLAUDE.md`. It does not use `AGENTS.md` directly. skctl compiles
+`instructions/AGENTS.md` into the Claude path, so it gets the same content, with any
+`host:claude` blocks, without maintaining a second source.
 
 ## Skill links
 
