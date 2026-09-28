@@ -18,6 +18,9 @@ export interface ManifestEntry {
   enabled?: boolean;
   hosts?: Host[];
   tags?: string[];
+  // Managed on purpose despite matching a host built-in, so eject --builtins and doctor
+  // leave it alone.
+  adopted?: boolean;
 }
 
 export interface RemoteEntry {
@@ -30,6 +33,9 @@ export interface SkillsManifest {
   remotes: Record<string, RemoteEntry>;
   skills: Record<string, ManifestEntry>;
   commands: Record<string, ManifestEntry>;
+  // Skills handed back to ~/.agents/skills. Shared rather than machine-local so every
+  // machine that pulls the root hands its copy back too, and import never takes it again.
+  ejected: string[];
 }
 
 export interface ResolvedEntry {

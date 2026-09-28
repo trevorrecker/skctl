@@ -34,6 +34,7 @@ const normalizeEntry = (value: unknown): ManifestEntry => {
   if (hosts) entry.hosts = hosts;
   const tags = parseStrings(record.tags);
   if (tags) entry.tags = tags;
+  if (record.adopted === true) entry.adopted = true;
   return entry;
 };
 
@@ -66,6 +67,7 @@ export const defaultManifest = (): SkillsManifest => ({
   remotes: {},
   skills: {},
   commands: {},
+  ejected: [],
 });
 
 export const loadManifest = (manifestPath: string): SkillsManifest => {
@@ -77,6 +79,7 @@ export const loadManifest = (manifestPath: string): SkillsManifest => {
     remotes: normalizeRemotes(parsed.remotes),
     skills: normalizeEntries(parsed.skills),
     commands: normalizeEntries(parsed.commands),
+    ejected: parseStrings(parsed.ejected)?.sort() ?? [],
   };
 };
 
@@ -84,7 +87,9 @@ export const saveManifest = (
   manifestPath: string,
   manifest: SkillsManifest,
 ): void => {
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`, "utf-8");
+  const { ejected, ...rest } = manifest;
+  const written = ejected.length > 0 ? manifest : rest;
+  writeFileSync(manifestPath, `${JSON.stringify(written, undefined, 2)}\n`, "utf-8");
 };
 
 export const resolveEntry = (
@@ -150,3 +155,25 @@ export const setTags = (
     },
   };
 };
+
+// Hosts and tags describe how skctl served a skill, so they go when it stops serving it,
+// and a later adoption starts from the defaults rather than a stale selection.
+export const removeSkillEntry = (manifest: SkillsManifest, name: string): SkillsManifest => {
+  const { [name]: _dropped, ...skills } = manifest.skills;
+  return { ...manifest, skills };
+};
+
+export const setEjected = (manifest: SkillsManifest, name: string): SkillsManifest => ({
+  ...removeSkillEntry(manifest, name),
+  ejected: [...new Set([...manifest.ejected, name])].sort(),
+});
+
+export const clearEjected = (manifest: SkillsManifest, name: string): SkillsManifest => ({
+  ...manifest,
+  ejected: manifest.ejected.filter((ejected) => ejected !== name),
+});
+
+export const setAdopted = (manifest: SkillsManifest, name: string): SkillsManifest => ({
+  ...manifest,
+  skills: { ...manifest.skills, [name]: { ...manifest.skills[name], adopted: true } },
+});

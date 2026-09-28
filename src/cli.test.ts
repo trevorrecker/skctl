@@ -414,3 +414,64 @@ test("project init preserves copy ownership and rejects an explicit mode change"
   assert.match(changed.output, /project already uses copy mode/);
   assert.equal(loadProjectConfig(target)?.mode, "copy");
 });
+
+test("CLI import skips host built-ins and eject hands skills back", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
+  const home = join(scratch, "home");
+  const root = join(scratch, "skills-root");
+  const cursorConfig = join(scratch, "cursor-config");
+  mkdirSync(home, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(scratch, "config"),
+    CLAUDE_CONFIG_DIR: join(scratch, "claude-config"),
+    CODEX_HOME: join(scratch, "codex-home"),
+    OPENCODE_CONFIG_DIR: join(scratch, "opencode-config"),
+    CURSOR_CONFIG_DIR: cursorConfig,
+  };
+  const run = (...args: string[]) =>
+    spawnSync(process.execPath, [cli, ...args, "--no-raycast"], { encoding: "utf-8", env });
+  const loose = (dir: string, name: string): void => {
+    mkdirSync(join(dir, name), { recursive: true });
+    writeFileSync(join(dir, name, "SKILL.md"), `---\nname: ${name}\ndescription: x\n---\n\nbody\n`);
+  };
+  const agents = join(home, ".agents", "skills");
+  loose(join(cursorConfig, "skills-cursor"), "canvas");
+  loose(agents, "canvas");
+  loose(agents, "mine");
+  loose(agents, "not-mine");
+  assert.equal(run("init", root).status, 0);
+
+  const imported = run("import", "--skip", "not-mine");
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.match(imported.stdout, /imported 1 skill\(s\): mine/);
+  assert.match(imported.stdout, /canvas: cursor built-in, left in place/);
+  assert.deepEqual(loadManifest(join(root, "skills.config.json")).ejected, ["not-mine"]);
+
+  const usage = run("eject");
+  assert.equal(usage.status, 1);
+  assert.match(usage.stderr, /usage: skctl eject/);
+
+  const ejected = run("eject", "mine");
+  assert.equal(ejected.status, 0, ejected.stderr);
+  assert.equal(lstatSync(join(agents, "mine")).isSymbolicLink(), false);
+  assert.equal(existsSync(join(root, "skills", "mine")), false);
+
+  const adopted = run("import", "--adopt", "mine");
+  assert.equal(adopted.status, 0, adopted.stderr);
+  assert.ok(lstatSync(join(agents, "mine")).isSymbolicLink());
+  assert.deepEqual(loadManifest(join(root, "skills.config.json")).ejected, ["not-mine"]);
+
+  const missing = run("import", "--adopt", "nowhere");
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /no loose skill in ~\/\.agents\/skills to adopt: nowhere/);
+
+  const builtin = run("import", "--adopt", "canvas");
+  assert.equal(builtin.status, 0, builtin.stderr);
+  assert.equal(loadManifest(join(root, "skills.config.json")).skills.canvas?.adopted, true);
+  const kept = run("eject", "--builtins");
+  assert.match(kept.stdout, /nothing ejected/);
+  assert.ok(existsSync(join(root, "skills", "canvas", "SKILL.md")));
+});

@@ -11,7 +11,9 @@ import {
   skillContent,
 } from "./skills/inspect.js";
 import { doctor } from "./skills/doctor.js";
+import { builtinOwner } from "./skills/builtins.js";
 import { importLooseSkills } from "./skills/import.js";
+import { builtinShadows, ejectSkills } from "./skills/eject.js";
 import {
   importInstructions,
   removeInstructionLink,
@@ -27,9 +29,12 @@ import type { Destination } from "./skills/destinations.js";
 import { createCommand, createSkill } from "./skills/create.js";
 import { validateName } from "./skills/names.js";
 import {
+  clearEjected,
   loadManifest,
   saveManifest,
+  setAdopted,
   setEnabled,
+  setEjected,
   setHosts,
   setTags,
 } from "./skills/manifest.js";
@@ -115,6 +120,8 @@ interface Args {
   hosts?: string;
   tags?: string;
   skills?: string;
+  adopt?: string;
+  skip?: string;
   as?: string;
   color?: boolean;
   dryRun: boolean;
@@ -125,6 +132,7 @@ interface Args {
   projectMode?: ProjectMode;
   apply: boolean;
   force: boolean;
+  builtins: boolean;
 }
 
 interface CommandOutput {
@@ -145,6 +153,7 @@ const parseArgs = (argv: string[]): Args => {
     noRaycast: false,
     apply: false,
     force: false,
+    builtins: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -173,6 +182,7 @@ const parseArgs = (argv: string[]): Args => {
     else if (token === "--link") args.projectMode = "link";
     else if (token === "--apply") args.apply = true;
     else if (token === "--force") args.force = true;
+    else if (token === "--builtins") args.builtins = true;
     else if (token === "--project") args.project = true;
     else if (token.startsWith("--project=")) args.project = value(token.slice("--project=".length));
     else if (token === "--root") args.root = value();
@@ -192,6 +202,10 @@ const parseArgs = (argv: string[]): Args => {
     else if (token.startsWith("--tags=")) args.tags = value(token.slice("--tags=".length));
     else if (token === "--skills") args.skills = value();
     else if (token.startsWith("--skills=")) args.skills = value(token.slice("--skills=".length));
+    else if (token === "--adopt") args.adopt = value();
+    else if (token.startsWith("--adopt=")) args.adopt = value(token.slice("--adopt=".length));
+    else if (token === "--skip") args.skip = value();
+    else if (token.startsWith("--skip=")) args.skip = value(token.slice("--skip=".length));
     else if (token === "--as") args.as = value();
     else if (token.startsWith("--as=")) args.as = value(token.slice("--as=".length));
     else if (token === "-o" || token === "--output") args.output = value();
@@ -684,26 +698,100 @@ const importDispatch = (args: Args): CommandOutput => {
     );
   }
   if (resource !== "skills" && resource !== "skill") {
-    throw new Error("usage: skctl import [skills|instructions] [--dry-run]");
+    throw new Error(
+      "usage: skctl import [skills|instructions] [--adopt a,b] [--skip a,b] [--dry-run]",
+    );
   }
-  const report = importLooseSkills(paths, args.dryRun);
+  const adopt = new Set(parseNameList(args.adopt));
+  const skip = new Set(parseNameList(args.skip));
+  const both = [...adopt].filter((name) => skip.has(name));
+  if (both.length > 0) throw new Error(`both adopted and skipped: ${both.join(", ")}`);
+  const unmatched = [...adopt].filter((name) => {
+    const loose = join(paths.surfaceDirs.agents, name);
+    return isSymlink(loose) || !existsSync(join(loose, "SKILL.md"));
+  });
+  if (unmatched.length > 0) {
+    throw new Error(`no loose skill in ~/.agents/skills to adopt: ${unmatched.join(", ")}`);
+  }
+  const manifest = loadManifest(paths.manifestPath);
+  const report = importLooseSkills(paths, manifest, { dryRun: args.dryRun, adopt, skip });
+  const adopted = report.imported.filter((name) => adopt.has(name));
+  if (!args.dryRun && (adopted.length > 0 || report.ejected.length > 0)) {
+    const reclaimed = adopted.reduce((next, name) => {
+      const cleared = clearEjected(next, name);
+      const shadows = builtinOwner(paths, name, join(paths.sourceSkills, name)) !== undefined;
+      return shadows ? setAdopted(cleared, name) : cleared;
+    }, manifest);
+    saveManifest(
+      paths.manifestPath,
+      report.ejected.reduce(setEjected, reclaimed),
+    );
+  }
   const lead = `imported ${report.imported.length} skill(s)${
     report.imported.length > 0 ? `: ${report.imported.join(", ")}` : ""
   }`;
-  if (args.dryRun || report.imported.length === 0) {
-    return {
-      text: renderNotice([
-        lead,
-        ...report.skipped.map((action) => dim(`skipped  ${action.detail}`)),
-      ]),
-      data: report,
-      conflicts: 0,
-    };
-  }
-  return applyOutput(applyResult(paths, args, { dryRun: false }), args, [
+  const notices = [
     lead,
-    ...report.skipped.map((action) => dim(`skipped  ${action.detail}`)),
-  ]);
+    ...(report.ejected.length > 0 ? [`recorded as ejected: ${report.ejected.join(", ")}`] : []),
+    ...report.skipped.map((action) =>
+      dim(`skipped  ${action.detail}${action.note === undefined ? "" : ` (${action.note})`}`),
+    ),
+  ];
+  if (args.dryRun || report.imported.length === 0) {
+    return { text: renderNotice(notices), data: report, conflicts: 0 };
+  }
+  return applyOutput(applyResult(paths, args, { dryRun: false }), args, notices);
+};
+
+const parseNameList = (value: string | undefined): string[] =>
+  value?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
+
+const ejectDispatch = (args: Args): CommandOutput => {
+  const names = args.positional.slice(1);
+  if (args.builtins === (names.length > 0)) {
+    throw new Error("usage: skctl eject <name...> | --builtins [--dry-run]");
+  }
+  const paths = resolveScope(args);
+  if (paths.scope !== "global") {
+    throw new Error("eject requires a global skills root");
+  }
+  const manifest = loadManifest(paths.manifestPath);
+  const result = ejectSkills(
+    paths,
+    manifest,
+    args.builtins ? builtinShadows(paths, manifest) : names,
+    args.dryRun,
+  );
+  const ejected = [
+    ...new Set(
+      result.actions
+        .filter((action) => action.kind !== "conflict")
+        .flatMap((action) => (action.subject === undefined ? [] : [action.subject])),
+    ),
+  ];
+  const lead = ejected.length === 0
+    ? "nothing ejected"
+    : `${args.dryRun ? "would eject" : "ejected"} ${ejected.length} skill(s): ${ejected.join(", ")}`;
+  const leading = [{ name: "eject", actions: result.actions }];
+  if (args.dryRun || ejected.length === 0) {
+    return applyOutput(
+      {
+        verb: "eject",
+        dryRun: args.dryRun,
+        root: paths.sourceRepo,
+        hosts: [...AllHosts],
+        sections: leading,
+      },
+      args,
+      [lead],
+    );
+  }
+  saveManifest(paths.manifestPath, result.manifest);
+  return applyOutput(
+    applyResult(paths, args, { verb: "eject", dryRun: false, leading }),
+    args,
+    [lead],
+  );
 };
 
 const resolveDestPath = (value: string): string =>
@@ -1404,6 +1492,8 @@ const dispatch = async (args: Args): Promise<CommandOutput> => {
       return toggleDispatch(args, false);
     case "import":
       return importDispatch(args);
+    case "eject":
+      return ejectDispatch(args);
     case "dest":
     case "destination":
     case "destinations":

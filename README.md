@@ -68,6 +68,30 @@ skctl import --dry-run
 skctl import
 ```
 
+Import leaves alone any skill a host ships itself. Cursor's are listed in
+`~/.cursor/skills-cursor` and Codex's in `~/.codex/skills/.system`. Tools that migrate
+skills between hosts copy these into `~/.agents/skills`, where they would otherwise look
+like your own. A copy whose name the host no longer lists is still recognized by
+frontmatter only that host uses, such as Cursor's `environments`. Pass `--adopt name` to
+import one anyway; skctl records the choice, so `eject --builtins` and `status` leave it
+alone. Pass `--skip name` to leave a loose skill where it is and keep every machine from
+importing it.
+
+`eject` stops managing a skill and hands it to its owner without deleting it. A skill a
+host ships goes back to that host, which keeps its own copy. Any other skill is compiled
+into a real directory in `~/.agents/skills` and listed under `ejected` in
+`skills.config.json`, so import never takes it again. When another machine pulls that
+change, its next `apply` hands the skill back there too. The full skill is restored from
+the root's git history, and the last build is the fallback. A machine that never served
+the skill has nothing to hand back.
+
+```bash
+skctl eject --builtins --dry-run
+skctl eject --builtins
+skctl eject my-skill
+skctl import --adopt my-skill
+```
+
 Install every skill from a Git repository, or narrow the selection with
 `--skills one,two`:
 
@@ -273,7 +297,7 @@ prints only conflicts and the final summary.
 skctl init [dir]
 skctl config [set root|raycast|refresh <value>]
 skctl create skill|command [name]
-skctl import [skills|instructions]
+skctl import [skills|instructions] [--adopt a,b] [--skip a,b]
 skctl get skills|commands|remotes|tags [name]
 skctl describe skill|command|remote|tag <name>
 skctl apply
@@ -283,6 +307,7 @@ skctl remote add <url> [alias] | remove <alias> | list
 skctl browse [alias|url]
 skctl pull [remote]
 skctl detach skill <name>
+skctl eject <name...> | --builtins
 skctl dest add|list|remove [path]
 skctl project [apply]|init|status|remove
 skctl refresh

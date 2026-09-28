@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { projectSkillsDirs, userSkillsDirs } from "../providers/index.js";
+import { builtinSources, projectSkillsDirs, userSkillsDirs } from "../providers/index.js";
+import type { BuiltinSource } from "../providers/index.js";
 import { CommandHosts } from "./types.js";
 import type { CommandHost, Surface } from "./types.js";
 
@@ -42,6 +43,7 @@ export interface SkillPaths {
   instructionImports: string[];
   instructionLinks: InstructionTarget[];
   surfaceDirs: Record<Surface, string>;
+  builtins: BuiltinSource[];
   skillLockPath: string;
   commandDirs: Record<CommandHost, string>;
   commandHosts: CommandHost[];
@@ -100,6 +102,13 @@ export const resolveSkillPaths = (
     cursorConfigDir ??
     (useEnvironment ? process.env.CURSOR_CONFIG_DIR : undefined) ??
     join(home, ".cursor");
+  const providerHome = {
+    home,
+    claudeConfigDir: resolvedClaudeConfigDir,
+    codexHome: resolvedCodexHome,
+    opencodeConfigDir: resolvedOpencodeConfigDir,
+    cursorConfigDir: resolvedCursorConfigDir,
+  };
   return {
     scope: "global",
     sourceRepo,
@@ -121,13 +130,8 @@ export const resolveSkillPaths = (
         surface: surfaceForInstructionFile(path),
       })),
     ]),
-    surfaceDirs: userSkillsDirs({
-      home,
-      claudeConfigDir: resolvedClaudeConfigDir,
-      codexHome: resolvedCodexHome,
-      opencodeConfigDir: resolvedOpencodeConfigDir,
-      cursorConfigDir: resolvedCursorConfigDir,
-    }),
+    surfaceDirs: userSkillsDirs(providerHome),
+    builtins: builtinSources(providerHome),
     skillLockPath: join(home, ".agents", ".skill-lock.json"),
     commandDirs: {
       claude: join(resolvedClaudeConfigDir, "commands"),
@@ -156,6 +160,8 @@ export const resolveProjectPaths = (projectDir: string): SkillPaths => {
     instructionImports: [],
     instructionLinks: [],
     surfaceDirs: projectSkillsDirs(root),
+    // Hosts ship built-ins at user level only, and project scope never imports or ejects.
+    builtins: [],
     skillLockPath: join(agents, ".skill-lock.json"),
     commandDirs: {
       claude: join(root, ".claude", "commands"),

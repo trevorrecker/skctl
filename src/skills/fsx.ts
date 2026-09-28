@@ -6,7 +6,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { dirname, relative } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Action } from "./types.js";
 
 export const pathPresent = (path: string): boolean => {
@@ -32,6 +32,13 @@ export const symlinkTarget = (path: string): string | undefined => {
   } catch {
     return undefined;
   }
+};
+
+export const linksInto = (linkPath: string, roots: readonly string[]): boolean => {
+  const target = symlinkTarget(linkPath);
+  if (target === undefined) return false;
+  const resolved = resolve(dirname(linkPath), target);
+  return roots.some((root) => resolved === root || resolved.startsWith(root + sep));
 };
 
 const relativeLink = (linkPath: string, target: string): string =>

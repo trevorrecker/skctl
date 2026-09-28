@@ -563,6 +563,7 @@ const usageGroups: ReadonlyArray<readonly [string, ReadonlyArray<UsageEntry>]> =
       ["create skill|command [name]", "scaffold a source file, interactive if name omitted"],
       ["import [skills|instructions]", "adopt loose local skills or home instructions"],
       ["detach skill <name>", "copy a remote skill into local source"],
+      ["eject <name...>|--builtins", "stop managing skills and hand them to their host or ~/.agents/skills"],
     ],
   ],
   [
@@ -644,6 +645,10 @@ export const renderUsage = (): string =>
       ["--dir <path>", "select the project or Raycast target directory"],
       ["--link, --copy", "how `project` materializes skills; link is the default"],
       ["--force", "replace a source file or a remote alias URL"],
+    ]),
+    flagGroup("IMPORT FLAGS", [
+      ["--adopt <a,b>", "import these even if a host ships them or they were ejected"],
+      ["--skip <a,b>", "leave these in place and never import them on any machine"],
     ]),
     flagGroup("CREATE FLAGS", [
       ["-d, --description <text>", "frontmatter description"],

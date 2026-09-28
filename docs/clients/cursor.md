@@ -30,6 +30,17 @@ content the others do not see. skctl covers Cursor through the shared `agents` s
 default. Its own directory carries a Cursor-only variant when a skill asks for one, and
 `skctl apply` reports the resulting overlap.
 
+## Built-in skills
+
+Cursor syncs the skills it ships into `~/.cursor/skills-cursor`, listed in its
+`.sync-manifest.json`. Older releases used `~/.cursor/.cursor-user-skills/skills-cursor`.
+skctl never writes to either. Other tools that migrate Cursor skills copy them into
+`~/.agents/skills`, and some rewrite the text along the way, so `skctl import` matches by
+name against both directories rather than by content. A copy Cursor no longer lists is
+still recognized by frontmatter only Cursor's own skills use, `environments` and
+`disabled-environments`. `skctl eject --builtins` removes any that already reached the
+source repo, and Cursor keeps its own copy.
+
 ## Frontmatter
 
 The `cursor` surface is not a superset of the Agent Skills spec. Cursor takes `paths` and

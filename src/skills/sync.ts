@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -7,9 +8,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { divergentBodies, planSkillBuild, pruneBuild, writeSkillBuild } from "./build.js";
+import {
+  divergentBodies,
+  planSkillBuild,
+  pruneBuild,
+  writeSkillBuild,
+  writeStandaloneSkill,
+} from "./build.js";
 import { compileCommand, isGeneratedCommand } from "./commands.js";
-import { ensureSymlink, removeIfSymlink } from "./fsx.js";
+import { ensureSymlink, isSymlink, linksInto, pathPresent, removeIfSymlink } from "./fsx.js";
+import { restoreFromHistory } from "./history.js";
 import { loadManifest, resolveEntry } from "./manifest.js";
 import { loadOverlays } from "./overlays.js";
 import { resolveRemoteSkills } from "./remotes.js";
@@ -187,6 +195,81 @@ const pruneBrokenLinks = (dir: string, dryRun: boolean): Action[] => {
   return actions;
 };
 
+// A link skctl made: the build link apply keeps, or the source link import leaves before
+// the first apply. Anything else at that path belongs to someone else.
+export const ownsAgentsEntry = (paths: SkillPaths, path: string): boolean =>
+  isSymlink(path) && linksInto(path, [paths.buildDir, paths.sourceSkills]);
+
+// Build siblings link into source, so once source is gone only the ones that still resolve
+// can be copied.
+const copyBuild = (buildSkillDir: string, dest: string): string[] => {
+  mkdirSync(dest, { recursive: true });
+  const missing: string[] = [];
+  for (const entry of readdirSync(buildSkillDir)) {
+    const path = join(buildSkillDir, entry);
+    if (!existsSync(path)) {
+      missing.push(entry);
+      continue;
+    }
+    cpSync(path, join(dest, entry), { recursive: true, dereference: true });
+  }
+  return missing;
+};
+
+const handBack = (
+  paths: SkillPaths,
+  name: string,
+  builtFor: Surface[],
+  dest: string,
+  dryRun: boolean,
+): Action => {
+  const action: Action = {
+    kind: pathPresent(dest) ? "replaced" : "created",
+    subject: name,
+    detail: dest,
+    note: "ejected elsewhere, handed back",
+  };
+  if (dryRun) return action;
+  const restored = restoreFromHistory(paths, name);
+  if (isSymlink(dest)) rmSync(dest);
+  if (restored !== undefined) {
+    try {
+      writeStandaloneSkill(name, restored.skillDir, "agents", restored.overlay, dest);
+    } finally {
+      rmSync(restored.scratch, { recursive: true, force: true });
+    }
+    return { ...action, note: `ejected elsewhere, handed back from ${restored.commit}` };
+  }
+  const surface = builtFor.includes("agents") ? "agents" : builtFor[0];
+  const missing = copyBuild(join(paths.buildDir, surface, name), dest);
+  return {
+    ...action,
+    note: missing.length === 0
+      ? `ejected elsewhere, handed back from the ${surface} build`
+      : `ejected elsewhere, handed back from the ${surface} build without ${missing.join(", ")}`,
+  };
+};
+
+// Ejected on another machine and pulled here. A skill this machine was still serving goes
+// back to ~/.agents/skills before its build is pruned, so ejecting never deletes it
+// anywhere. A machine that never built it has nothing to hand back.
+const handBackEjected = (
+  paths: SkillPaths,
+  manifest: SkillsManifest,
+  served: ReadonlySet<string>,
+  dryRun: boolean,
+): Action[] =>
+  manifest.ejected.flatMap((name) => {
+    if (served.has(name)) return [];
+    const builtFor = AllSurfaces.filter((surface) =>
+      pathPresent(join(paths.buildDir, surface, name)),
+    );
+    const dest = join(paths.surfaceDirs.agents, name);
+    if (builtFor.length === 0) return [];
+    if (pathPresent(dest) && !ownsAgentsEntry(paths, dest)) return [];
+    return [handBack(paths, name, builtFor, dest, dryRun)];
+  });
+
 export const GeneratedIgnoreEntries = [".build/", "remotes/"] as const;
 
 // Internal housekeeping, not a reported change: keep generated builds and remote clones
@@ -275,8 +358,11 @@ export const sync = (
     );
   }
 
-  // Order matters: dropping a stale build first leaves its links dangling, and the broken
-  // link sweep then clears them, which covers a skill deleted from source outright.
+  // Order matters: an ejected skill is handed back while its build still exists, then
+  // dropping a stale build leaves its links dangling, and the broken link sweep clears them,
+  // which covers a skill deleted from source outright.
+  const served = new Set([...localNames, ...remotes.skills.map((skill) => skill.name)]);
+  skills.push(...handBackEjected(paths, manifest, served, dryRun));
   skills.push(...pruneBuild(paths.buildDir, built, dryRun));
   for (const surface of AllSurfaces) {
     skills.push(...pruneBrokenLinks(paths.surfaceDirs[surface], dryRun));

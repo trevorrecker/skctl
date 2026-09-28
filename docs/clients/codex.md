@@ -13,10 +13,10 @@ instruction file and prompt commands. Codex keeps user skills under
 `~/.agents/skills`.
 
 Each skctl invocation manages the active `CODEX_HOME`. Register other Codex homes as
-machine-local targets:
+machine-local destinations:
 
 ```bash
-skctl instruction add ~/.codex-work/AGENTS.md
+skctl dest add ~/.codex-work
 ```
 
 ## Instruction discovery
@@ -47,7 +47,8 @@ Codex follows symlinked skill directories. It initially loads skill names and
 descriptions, then reads a full `SKILL.md` when the skill runs.
 
 `$CODEX_HOME/skills` holds skills bundled with Codex under `.system`. skctl does not write
-there.
+there, and `skctl import` treats a skill in `~/.agents/skills` that shares a name with one
+of them as a Codex built-in and leaves it in place.
 
 ## Frontmatter
 

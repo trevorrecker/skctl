@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { builtinOwner } from "./builtins.js";
 import { isSymlink, pathPresent, symlinkTarget } from "./fsx.js";
 import { compileInstruction, hashInstruction } from "./instructions.js";
 import { loadManifest } from "./manifest.js";
@@ -78,6 +79,7 @@ const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
   const agentsSkills = paths.surfaceDirs.agents;
   if (!existsSync(agentsSkills)) return;
   const vendored = lockedSkillNames(paths.skillLockPath);
+  const { ejected } = loadManifest(paths.manifestPath);
   for (const entry of readdirSync(agentsSkills, { withFileTypes: true })) {
     const path = join(agentsSkills, entry.name);
     if (entry.isSymbolicLink()) {
@@ -104,12 +106,19 @@ const scanAgentsSkills = (paths: SkillPaths, report: DoctorReport): void => {
         detail: entry.name,
         hint: "skill-lock",
       });
-    } else if (entry.isDirectory() && hasRealSkillFile(path)) {
+    } else if (entry.isDirectory() && ejected.includes(entry.name)) {
       report.notes.push({
-        label: "untracked",
+        label: "ejected",
         detail: entry.name,
-        hint: "run `skctl import`",
+        hint: "`skctl import --adopt` manages it again",
       });
+    } else if (entry.isDirectory() && hasRealSkillFile(path)) {
+      const owner = builtinOwner(paths, entry.name, path);
+      report.notes.push(
+        owner === undefined
+          ? { label: "untracked", detail: entry.name, hint: "run `skctl import`" }
+          : { label: "host built-in copy", detail: entry.name, hint: owner.reason },
+      );
     } else if (
       entry.isDirectory() &&
       existsSync(join(path, "SKILL.md")) &&
@@ -161,6 +170,29 @@ const scanOrphans = (paths: SkillPaths, report: DoctorReport): void => {
   for (const [name, overlay] of overlays) {
     if (!skills.has(name)) {
       report.issues.push({ label: "orphan overlay", detail: overlay.path, hint: `no skill '${name}'` });
+    }
+  }
+};
+
+const scanEjected = (paths: SkillPaths, report: DoctorReport): void => {
+  const { ejected, skills } = loadManifest(paths.manifestPath);
+  for (const name of listSkillNames(paths.sourceSkills)) {
+    if (skills[name]?.adopted === true) continue;
+    if (ejected.includes(name)) {
+      report.issues.push({
+        label: "ejected skill in source",
+        detail: name,
+        hint: `drop it from \`ejected\` to keep it, or run \`skctl eject ${name}\``,
+      });
+      continue;
+    }
+    const owner = builtinOwner(paths, name, join(paths.sourceSkills, name));
+    if (owner !== undefined) {
+      report.issues.push({
+        label: "shadows host built-in",
+        detail: name,
+        hint: `${owner.reason}; run \`skctl eject ${name}\` or \`skctl eject --builtins\``,
+      });
     }
   }
 };
@@ -257,7 +289,10 @@ export const doctor = (
   for (const surface of AllSurfaces) {
     if (surface !== "agents" || paths.scope !== "global") scanSurfaceLinks(paths, surface, report);
   }
-  if (paths.scope === "global") scanAgentsSkills(paths, report);
+  if (paths.scope === "global") {
+    scanAgentsSkills(paths, report);
+    scanEjected(paths, report);
+  }
   scanInstructions(paths, instructionHashes, report);
   scanOrphans(paths, report);
   scanGeneratedIgnores(paths, report);
