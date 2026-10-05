@@ -7,10 +7,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRecord } from "./record.js";
 import { loadManifest, saveManifest } from "./skills/manifest.js";
@@ -158,6 +160,96 @@ test("CLI manages instruction aliases and machine-local skill tags", () => {
   assert.match(refreshed, /scheduled refresh/);
   assert.ok(existsSync(join(home, ".agents", "skills", "remote-only", "SKILL.md")));
   assert.doesNotMatch(run("apply", "--no-raycast"), /scheduled refresh/);
+});
+
+test("CLI dry runs of tag and toggle commands write nothing and plan the change", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skctl-cli-"));
+  const home = join(scratch, "home");
+  const root = join(scratch, "skills-root");
+  const configFile = join(scratch, "config", "skctl", "config.json");
+  const manifestFile = join(root, "skills.config.json");
+  const agents = join(home, ".agents", "skills");
+  mkdirSync(home, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(scratch, "config"),
+    CLAUDE_CONFIG_DIR: join(scratch, "claude-config"),
+    CODEX_HOME: join(scratch, "codex-home"),
+    OPENCODE_CONFIG_DIR: join(scratch, "opencode-config"),
+    CURSOR_CONFIG_DIR: join(scratch, "cursor-config"),
+  };
+  const run = (...args: string[]): string =>
+    execFileSync(process.execPath, [cli, ...args, "--no-raycast"], { encoding: "utf-8", env });
+  const runJson = (...args: string[]): Record<string, unknown> => {
+    const payload: unknown = JSON.parse(run(...args, "-o", "json"));
+    assert.ok(isRecord(payload));
+    return payload;
+  };
+  // Every path, link target, and file body under the scratch dir, so any write shows up.
+  const snapshot = (dir = scratch): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+      const path = join(dir, entry.name);
+      const name = relative(scratch, path);
+      if (entry.isSymbolicLink()) return [`${name} -> ${readlinkSync(path)}`];
+      if (entry.isDirectory()) return [`${name}/`, ...snapshot(path)];
+      return [`${name}: ${readFileSync(path, "utf-8")}`];
+    });
+  const planned = (payload: Record<string, unknown>, subject: string, kind: string): boolean =>
+    Array.isArray(payload.sections) &&
+    payload.sections.filter(isRecord).some(section =>
+      Array.isArray(section.actions) &&
+      section.actions.filter(isRecord).some(action =>
+        action.subject === subject && action.kind === kind
+      )
+    );
+
+  run("init", root);
+  run("create", "skill", "core", "--no-paste");
+  run("create", "skill", "work-only", "--no-paste", "--tags", "work");
+  run("create", "command", "greet", "-d", "greets");
+  run("apply");
+  const before = snapshot();
+
+  const tagPlan = run("enable", "tag", "work", "--dry-run");
+  assert.match(tagPlan, /would enable tag 'work'/);
+  assert.match(tagPlan, /\(dry run\)/);
+  assert.match(tagPlan, /work-only/);
+  const tagJson = runJson("enable", "tag", "work", "--dry-run");
+  assert.equal(tagJson.dryRun, true);
+  assert.ok(planned(tagJson, "work-only", "created"));
+
+  const skillPlan = run("disable", "skill", "core", "--dry-run");
+  assert.match(skillPlan, /would disable skill 'core'/);
+  assert.match(skillPlan, /\(dry run\)/);
+  assert.ok(planned(runJson("disable", "skill", "core", "--dry-run"), "core", "removed"));
+  assert.ok(
+    planned(runJson("disable", "command", "greet", "--dry-run"), "greet/claude", "removed"),
+  );
+
+  assert.match(run("tag", "skill", "core", "extra", "--dry-run"), /would add extra to 'core'/);
+  const tagged = runJson("tag", "skill", "core", "extra", "--dry-run");
+  assert.deepEqual(tagged, { skill: "core", tags: ["extra"], dryRun: true });
+  assert.match(
+    run("untag", "skill", "work-only", "work", "--dry-run"),
+    /would remove work from 'work-only'/,
+  );
+
+  assert.deepEqual(snapshot(), before);
+
+  assert.match(run("enable", "tag", "work"), /activated tag 'work'/);
+  const config: unknown = JSON.parse(readFileSync(configFile, "utf-8"));
+  assert.ok(isRecord(config));
+  assert.deepEqual(config.activeTags, ["work"]);
+  assert.ok(lstatSync(join(agents, "work-only")).isSymbolicLink());
+
+  assert.match(run("disable", "skill", "core"), /disabled skill 'core'/);
+  assert.equal(loadManifest(manifestFile).skills.core?.enabled, false);
+  assert.equal(existsSync(join(agents, "core")), false);
+
+  assert.match(run("tag", "skill", "core", "extra"), /added extra to 'core'/);
+  assert.deepEqual(loadManifest(manifestFile).skills.core?.tags, ["extra"]);
 });
 
 test("CLI reports conflicts through the exit code, quiet mode, and JSON", () => {

@@ -64,7 +64,7 @@ import { AllHosts } from "./skills/types.js";
 import type { CommandInfo, SkillInfo } from "./skills/inspect.js";
 import type { ProjectTarget, SkillPaths } from "./skills/paths.js";
 import type { ProjectConfig, ProjectMode, ProjectReport } from "./skills/project.js";
-import type { Action, Collection, Host } from "./skills/types.js";
+import type { Action, Collection, Host, SkillsManifest } from "./skills/types.js";
 import {
   configPath,
   initRoot,
@@ -513,6 +513,9 @@ const applyResult = (
     dryRun: boolean;
     refreshRemotes?: boolean;
     leading?: ReportSection[];
+    // A dry run plans against proposed state that was never saved.
+    manifest?: SkillsManifest;
+    activeTags?: readonly string[];
   },
 ): ApplyResult => {
   const refreshed = opts.refreshRemotes === false
@@ -521,9 +524,9 @@ const applyResult = (
   const config = loadConfig();
   const report = sync(
     paths,
-    loadManifest(paths.manifestPath),
+    opts.manifest ?? loadManifest(paths.manifestPath),
     opts.dryRun,
-    config.activeTags,
+    opts.activeTags ?? config.activeTags,
     config.instructionHashes,
   );
   if (!opts.dryRun && !sameHashes(config.instructionHashes, report.instructionHashes)) {
@@ -649,10 +652,14 @@ const toggleDispatch = (args: Args, enabled: boolean): CommandOutput => {
     if (!name) throw new Error(`usage: skctl ${verb} tag <name>`);
     validateName(name);
     const paths = resolveScope(args);
-    saveConfig(setTagActive(loadConfig(), name, enabled));
-    return applyOutput(applyResult(paths, args, { dryRun: false }), args, [
-      `${enabled ? "activated" : "deactivated"} tag '${name}'`,
-    ]);
+    const config = setTagActive(loadConfig(), name, enabled);
+    if (!args.dryRun) saveConfig(config);
+    const done = enabled ? "activated" : "deactivated";
+    return applyOutput(
+      applyResult(paths, args, { dryRun: args.dryRun, activeTags: config.activeTags }),
+      args,
+      [`${args.dryRun ? `would ${verb}` : done} tag '${name}'`],
+    );
   }
   if (resource !== "skills" && resource !== "commands") {
     throw new Error(`usage: skctl ${verb} skill|command|tag <name>`);
@@ -662,13 +669,14 @@ const toggleDispatch = (args: Args, enabled: boolean): CommandOutput => {
   const collection: Collection = resource;
   if (collection === "skills") findSkill(paths, name);
   else findCommand(paths, name);
-  saveManifest(
-    paths.manifestPath,
-    setEnabled(loadManifest(paths.manifestPath), collection, name, enabled),
+  const manifest = setEnabled(loadManifest(paths.manifestPath), collection, name, enabled);
+  if (!args.dryRun) saveManifest(paths.manifestPath, manifest);
+  const kind = collection.slice(0, -1);
+  return applyOutput(
+    applyResult(paths, args, { dryRun: args.dryRun, manifest }),
+    args,
+    [`${args.dryRun ? `would ${verb}` : `${verb}d`} ${kind} '${name}'`],
   );
-  return applyOutput(applyResult(paths, args, { dryRun: false }), args, [
-    `${enabled ? "enabled" : "disabled"} ${collection.slice(0, -1)} '${name}'`,
-  ]);
 };
 
 const importDispatch = (args: Args): CommandOutput => {
@@ -942,13 +950,18 @@ const tagDispatch = (args: Args, remove: boolean): CommandOutput => {
   const next = remove
     ? current.filter(tag => !tags.includes(tag))
     : [...current, ...tags];
-  saveManifest(paths.manifestPath, setTags(manifest, name, next));
+  if (!args.dryRun) saveManifest(paths.manifestPath, setTags(manifest, name, next));
+  const change = args.dryRun
+    ? `would ${remove ? "remove" : "add"}`
+    : remove ? "removed" : "added";
   return notice(
     [
-      `${remove ? "removed" : "added"} ${tags.join(", ")} ${remove ? "from" : "to"} '${name}'`,
+      `${change} ${tags.join(", ")} ${remove ? "from" : "to"} '${name}'${
+        args.dryRun ? ` ${dim("(dry run)")}` : ""
+      }`,
       dim(`tags: ${next.join(", ") || Marks.none}`),
     ],
-    { skill: name, tags: next },
+    { skill: name, tags: next, dryRun: args.dryRun },
   );
 };
 
